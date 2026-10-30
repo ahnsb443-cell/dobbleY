@@ -1,6 +1,6 @@
 {
   "name": "double-y-payroll",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -18,7 +18,7 @@
     "archive": "node scripts/archive.mjs",
     "start:firebase": "node --env-file-if-exists=.env.app.local firebase/local.mjs",
     "emulators": "firebase emulators:start --only auth,firestore --project demo-double-y",
-    "test:firebase": "firebase emulators:exec --only auth,firestore --project demo-double-y \"node --test --test-isolation=none test/firebase.test.mjs\"",
+    "test:firebase": "firebase emulators:exec --only auth,firestore --project demo-double-y \"node --test --test-isolation=none test/firebase.test.mjs test/classes.firebase.test.mjs\"",
     "test:firebase:browser": "firebase emulators:exec --only auth,firestore --project demo-double-y \"node scripts/browser.mjs --firebase\"",
     "deploy:firebase": "firebase deploy --only functions:payroll,hosting,firestore:rules,firestore:indexes",
     "firebase:export": "node scripts/firebase-export.mjs",

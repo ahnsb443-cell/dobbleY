@@ -2657,3 +2657,22 @@ body.menu-open {
     font-size: 24px;
   }
 }
+.class-shortcuts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: -3px 0 22px;
+}
+.class-shortcuts > * {
+  flex: 1;
+  min-width: 140px;
+}
+@media (max-width: 760px) {
+  .class-shortcuts {
+    gap: 10px;
+  }
+  .class-shortcuts > * {
+    font-size: 12px;
+    min-width: 120px;
+  }
+}

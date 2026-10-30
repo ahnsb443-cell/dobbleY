@@ -186,6 +186,9 @@ export async function addContract(s, a, b) {
     category: b.category,
     sale_type: b.saleType,
     amount: b.vatIncluded ? Math.round(raw / 1.1) : raw,
+    gross_amount: b.vatIncluded ? raw : null,
+    vat_amount: b.vatIncluded ? raw - Math.round(raw / 1.1) : null,
+    amount_basis: b.vatIncluded ? 'vat-included' : 'supply',
     quantity: qty,
     carry_used: integer(b.carryUsed || 0, '기진행횟수', 0, qty),
     external_ref: b.externalRef || null,
@@ -203,6 +206,10 @@ export async function addContract(s, a, b) {
     month: paid.slice(0, 7),
     category: c.category,
     kind: 'sale',
+    owner_profile: (await termsAt(s, p.id, paid.slice(0, 7)))?.profile || p.profile,
+    team_pt_eligible:
+      c.category === 'pt' &&
+      ((await termsAt(s, p.id, paid.slice(0, 7)))?.profile || p.profile) !== 'manager',
     amount: c.amount,
     original_id: null,
     legacy_refund: 0,
@@ -220,7 +227,7 @@ async function lessonGuard(s, c, date) {
     await guard(s, m, c.person_id);
 }
 const slot = (l) => JSON.stringify([l.contract_id, l.date, l.time]);
-export async function addLesson(s, a, b) {
+export async function addLesson(s, a, b, { duetSessionId = null } = {}) {
   const c = await owned(s, a, 'contracts', b.contractId),
     p = await person(s, a, c.person_id);
   const date = day(b.date),
@@ -250,15 +257,19 @@ export async function addLesson(s, a, b) {
     version: 1,
     created_at: now(),
     latest_signature_id: null,
+    session_id: duetSessionId,
+    format: duetSessionId ? 'duet' : 'individual',
   };
   await s.unique('lesson', slot(l), l.id);
   await s.put('lessons', l.id, l, { create: true });
   await s.audit(a, 'create', 'lesson', l.id, '', { contractId: c.id, date, time });
   return { ...l, confirmation: await confirmation(s, l) };
 }
-export async function changeLesson(s, a, key, b) {
+export async function changeLesson(s, a, key, b, { duetSessionId = null } = {}) {
   const l = await owned(s, a, 'lessons', key);
   version(l, b.version);
+  if (l.session_id && l.session_id !== duetSessionId)
+    fail(409, '듀엣 수업은 두 회원 기록을 함께 정정하세요.');
   if (l.status !== 'active') fail(409, '이미 취소된 수업입니다.');
   const c = await required(s, 'contracts', l.contract_id),
     p = await person(s, a, l.person_id);
@@ -469,20 +480,43 @@ export async function calculate(s, p, m) {
       unit: trainer(p) ? Math.round(((c.amount / c.quantity) * percent) / 100) : 0,
       signature: sig.state,
       signatureId: sig.signatureId,
+      sessionId: l.session_id || null,
+      category: c.category,
+      rawUnit: c.amount / c.quantity,
     });
   }
+  const duets = new Map();
+  for (const line of lines)
+    if (line.sessionId) {
+      if (!duets.has(line.sessionId)) duets.set(line.sessionId, []);
+      duets.get(line.sessionId).push(line);
+    }
+  for (const [sessionId, parts] of duets) {
+    const session = await required(s, 'duet_sessions', sessionId);
+    if (
+      session.status !== 'active' ||
+      parts.length !== 2 ||
+      !parts.every((l) => session.lesson_ids.includes(l.lessonId))
+    )
+      fail(409, '듀엣 두 회원의 기록을 함께 확인하세요.');
+    const total = Math.round((parts.reduce((n, l) => n + l.rawUnit, 0) * percent) / 100);
+    parts[0].unit = Math.round((parts[0].rawUnit * percent) / 100);
+    parts[1].unit = total - parts[0].unit;
+  }
+  for (const line of lines) delete line.rawUnit;
+  const groupLines = (await monthRows(s, 'group_lessons', m, p.id)).filter(
+    (r) => r.status === 'active',
+  );
+  const groupCommission = groupLines.reduce((n, r) => n + r.amount, 0),
+    groupMinutes = groupLines.reduce((n, r) => n + r.billable_minutes, 0);
   const commission = lines.reduce((n, l) => n + l.unit, 0),
     bonus =
       r.bonus && revenue >= 10000000
         ? (1 + Math.floor((revenue - 10000000) / 2000000)) * 200000
         : 0;
-  const totals = { membership: 0, pt: 0, center: 0 };
-  if (['manager', 'lead', 'fc'].includes(p.profile))
-    for (const sale of await monthRows(s, 'sales', m)) {
-      if (sale.category === 'membership') totals.membership += sale.amount;
-      if (sale.category === 'pt') totals.pt += sale.amount;
-      if (!sale.legacy_refund) totals.center += sale.amount;
-    }
+  const totals = ['manager', 'lead', 'fc'].includes(p.profile)
+    ? await salesTotals(s, m)
+    : { membership: 0, pt: 0, center: 0 };
   const membership = Math.max(0, totals.membership),
     pt = Math.max(0, totals.pt),
     center = Math.max(0, totals.center);
@@ -519,8 +553,16 @@ export async function calculate(s, p, m) {
         )) /
         100,
     );
-  const base = p.profile === 'part' ? Math.round((terms.base * input.hours100) / 100) : terms.base,
-    gross = base + commission + bonus + incentive + input.extra,
+  const base =
+      p.profile === 'part'
+        ? Math.round(
+            terms.base *
+              (input.work_minutes === undefined ? input.hours100 / 100 : input.work_minutes / 60),
+          )
+        : p.profile === 'daily'
+          ? Math.round((terms.base * input.hours100) / 100)
+          : terms.base,
+    gross = base + commission + groupCommission + bonus + incentive + input.extra,
     tax = Math.floor((gross * terms.tax_bps) / 10000),
     net = gross - tax - input.deduction;
   return {
@@ -532,7 +574,13 @@ export async function calculate(s, p, m) {
     newSales,
     renewSales,
     rate: percent,
-    lessons: lines.length,
+    lessons: lines.length - duets.size,
+    memberSessions: lines.length,
+    duetLessons: duets.size,
+    groupLessons: groupLines.length,
+    groupMinutes,
+    groupCommission,
+    groupLines,
     commission,
     bonus,
     incentive,
@@ -549,8 +597,8 @@ export async function calculate(s, p, m) {
     ruleId: rule.id,
     ruleVersion: rule.version,
     inputVersion: input.version,
-    calculationVersion: 'firebase-payroll-v1',
-    internal: { terms, rule, centerTotals: totals },
+    calculationVersion: 'firebase-payroll-v2',
+    internal: { terms, rule, inputs: input, centerTotals: totals },
     lines,
     sales: mine.map((x) => ({ id: x.id, amount: x.amount, version: x.version })),
   };
@@ -586,4 +634,55 @@ export async function result(s, a, pid, m) {
   };
   delete out.internal;
   return out;
+}
+
+export async function salesTotals(s, m) {
+  const totals = {
+    membership: 0,
+    membershipGross: 0,
+    membershipRefunds: 0,
+    pt: 0,
+    ptAll: 0,
+    pilates: 0,
+    center: 0,
+    centerNet: 0,
+  };
+  for (const sale of await monthRows(s, 'sales', m)) {
+    totals.centerNet += sale.amount;
+    if (!sale.legacy_refund) totals.center += sale.amount;
+    if (sale.category === 'membership') {
+      totals.membership += sale.amount;
+      if (sale.kind === 'sale') totals.membershipGross += sale.amount;
+      else totals.membershipRefunds -= sale.amount;
+    }
+    if (sale.category === 'pilates') totals.pilates += sale.amount;
+    if (sale.category === 'pt') {
+      totals.ptAll += sale.amount;
+      if (sale.person_id) {
+        const profile =
+          (await termsAt(s, sale.person_id, sale.date.slice(0, 7)))?.profile ||
+          (await required(s, 'people', sale.person_id)).profile;
+        if (
+          m < '2026-11' ||
+          (typeof sale.team_pt_eligible === 'boolean'
+            ? sale.team_pt_eligible
+            : profile !== 'manager')
+        )
+          totals.pt += sale.amount;
+      }
+    }
+  }
+  const monthly = await s.get('membership_totals', m);
+  if (monthly) {
+    const ledgerMembership = totals.membership;
+    const ledgerPerformance = (await monthRows(s, 'sales', m))
+      .filter((r) => r.category === 'membership' && !r.legacy_refund)
+      .reduce((n, r) => n + r.amount, 0);
+    totals.membership = monthly.amount;
+    totals.centerNet = totals.centerNet - ledgerMembership + monthly.amount;
+    totals.center = totals.center - ledgerPerformance + monthly.amount;
+    totals.membershipSource = 'monthly';
+    totals.membershipMonthlyVersion = monthly.version;
+  } else totals.membershipSource = 'ledger';
+  return totals;
 }

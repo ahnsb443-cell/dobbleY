@@ -39,11 +39,20 @@ async function snap(page, title, text) {
 }
 async function navigate(page, target) {
   const mobile = page.viewportSize().width <= 760;
+  if (mobile && (await page.locator('.mobile-nav [data-view="' + target + '"]').count()) === 0) {
+    await page.locator('#menu-toggle').click();
+    await page.locator('.sidebar nav [data-view="' + target + '"]').click();
+    return;
+  }
   await page
     .locator((mobile ? '.mobile-nav' : '.sidebar nav') + ' [data-view="' + target + '"]')
     .click();
 }
 async function clickSubmit(page) {
+  const invalid = await page
+    .locator('#modal-form :invalid')
+    .evaluateAll((fields) => fields.map((f) => f.name + ': ' + f.validationMessage));
+  assert.deepEqual(invalid, [], 'Form validation');
   await page.locator('#modal-form button[type=submit]').click();
 }
 async function closed(page) {
@@ -174,6 +183,185 @@ async function request(page, route, method = 'GET', body) {
     { route, method, body },
   );
 }
+async function extendedScenario(admin, browser) {
+  async function checked(page, route, method = 'GET', body) {
+    const r = await request(page, route, method, body);
+    assert.equal(r.status, 200, route + ' ' + JSON.stringify(r.body));
+    return r.body;
+  }
+  const month = '2026-09';
+  const mixed = await checked(admin, '/people', 'POST', {
+    name: '겸용 선생님',
+    profile: 'mixed',
+    hireMonth: '2026-01',
+  });
+  await navigate(admin, 'people');
+  await admin.locator('#new-account').click();
+  await admin.locator('[name=username]').fill('pilates02');
+  assert.equal(await admin.locator('[name=username]').evaluate((el) => el.checkValidity()), true);
+  await admin.locator('[name=personId]').selectOption(mixed.id);
+  assert.equal(await admin.locator('#unlinked-admin-name').isHidden(), true);
+  await admin.locator('[name=password]').fill('0471');
+  await clickSubmit(admin);
+  await closed(admin);
+  const ctx = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    isMobile: true,
+    hasTouch: true,
+    locale: 'ko-KR',
+  });
+  const page = await ctx.newPage();
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto(url);
+  await page.locator('[name=username]').fill('pilates02');
+  await page.locator('[name=password]').fill('0471');
+  await page.locator('#login-form button[type=submit]').click();
+  await page.waitForSelector('#password-form');
+  await page.locator('[name=currentPassword]').fill('0471');
+  await page.locator('[name=password]').fill('0839');
+  await page.locator('[name=confirm]').fill('0839');
+  await page.locator('#password-form button[type=submit]').click();
+  await page.waitForSelector('#month');
+  for (const p of [admin, page]) {
+    await p.locator('#month').fill(month);
+    await p.locator('#month').dispatchEvent('change');
+  }
+  const contracts = [];
+  for (const [name, amount] of [
+    ['듀엣 하나', '1100000'],
+    ['듀엣 둘', '2200000'],
+  ]) {
+    await navigate(page, 'members');
+    await page.locator('#new-registration').click();
+    await page.locator('[name=name]').fill(name);
+    await page.locator('[name=paidDate]').fill(month + '-01');
+    await page.locator('[name=startDate]').fill(month + '-01');
+    await page.locator('[name=amount]').fill(amount);
+    await page.locator('[name=quantity]').fill('10');
+    await page.locator('[name=category]').selectOption('pilates');
+    assert.equal(await page.locator('[name=vatIncluded]').inputValue(), 'true');
+    await clickSubmit(page);
+    await closed(page);
+    const member = (await checked(page, '/members?q=' + encodeURIComponent(name))).items[0];
+    const contract = (await checked(page, '/members/' + member.id)).contracts[0];
+    assert.equal(contract.amount, Math.round(Number(amount) / 1.1));
+    contracts.push({ member, contract });
+  }
+  await navigate(admin, 'groups');
+  await admin.locator('#new-group-rate').click();
+  await admin.locator('[name=personId]').selectOption(mixed.id);
+  await admin.locator('[name=name]').fill('그룹 필라테스');
+  await admin.locator('[name=effectiveDate]').fill(month + '-01');
+  await admin.locator('[name=hourlyRate]').fill('35000');
+  await admin.locator('[name=billableMinutes]').fill('60');
+  await admin.locator('[name=reason]').fill('시간당 계약');
+  await clickSubmit(admin);
+  await closed(admin);
+  await navigate(page, 'groups');
+  await page.locator('#new-group-lesson').click();
+  await page.locator('[name=date]').fill(month + '-20');
+  await page.locator('[name=date]').dispatchEvent('change');
+  await page.locator('[name=time]').fill('18:00');
+  await page.locator('[name=participants]').fill('5');
+  await clickSubmit(page);
+  await closed(page);
+  assert.match(await page.locator('#app').textContent(), /35,000/);
+  await page.locator('[data-group-edit]').click();
+  await page.locator('[name=participants]').fill('15');
+  await page.locator('[name=reason]').fill('출석 인원 확인');
+  await clickSubmit(page);
+  await closed(page);
+  await navigate(page, 'lessons');
+  await page.locator('#new-duet').click();
+  for (const [prefix, entry] of [
+    ['first', contracts[0]],
+    ['second', contracts[1]],
+  ]) {
+    await page.locator('[name=' + prefix + 'Member]').selectOption(entry.member.id);
+    await page.locator('[name=' + prefix + 'Contract]').selectOption(entry.contract.id);
+  }
+  await page.locator('[name=date]').fill(month + '-21');
+  await page.locator('[name=time]').fill('13:00');
+  await clickSubmit(page);
+  await page.waitForSelector('[data-duet-sign]');
+  for (let index = 0; index < 2; index++) {
+    if (index) {
+      await navigate(page, 'lessons');
+      await page.locator('[data-duet]').first().click();
+      await page.waitForSelector('[data-duet-sign]');
+    }
+    await page.locator('[data-duet-sign]').nth(index).click();
+    await page.waitForSelector('#sign-pad');
+    await page.locator('#confirm-sign').check();
+    await draw(page, ctx);
+    await page.locator('#save-sign').click();
+    await page.waitForFunction(() =>
+      document.querySelector('.member-intro')?.textContent.includes('저장 완료'),
+    );
+    await page.locator('#show-return').click();
+    await page.locator('#return-form [name=password]').fill('0839');
+    await page.locator('#return-form button').click();
+    await page.waitForFunction(() => document.querySelector('#member-screen').hidden);
+  }
+  const pay = await checked(page, '/payroll/' + mixed.id + '?month=' + month);
+  assert.equal(pay.revenue, 3000000);
+  assert.equal(pay.lessons, 1);
+  assert.equal(pay.duetLessons, 1);
+  assert.equal(pay.memberSessions, 2);
+  assert.equal(pay.commission, 90000);
+  assert.equal(pay.groupCommission, 35000);
+  assert.equal(pay.gross, 1125000);
+  assert.equal(pay.unconfirmed, 0);
+  await navigate(admin, 'dashboard');
+  await admin.locator('#membership-record').click();
+  await admin.locator('[name=amount]').fill('22000000');
+  await clickSubmit(admin);
+  await closed(admin);
+  let totals = await checked(admin, '/sales/summary?month=' + month);
+  assert.equal(totals.membership, 20000000);
+  assert.equal(totals.centerNet, 53000000);
+  await admin.locator('#membership-record').click();
+  await admin.locator('[name=amount]').fill('33000000');
+  await clickSubmit(admin);
+  await closed(admin);
+  totals = await checked(admin, '/sales/summary?month=' + month);
+  assert.equal(totals.membership, 30000000);
+  assert.equal(totals.centerNet, 63000000);
+  for (const [name, profile, base] of [
+    ['미화 시간급', 'part', 13000],
+    ['미화 일급', 'daily', 40000],
+  ]) {
+    const p = await checked(admin, '/people', 'POST', {
+      name,
+      profile,
+      base,
+      taxBps: 0,
+      hireMonth: '2026-01',
+    });
+    await navigate(admin, 'people');
+    await admin.locator('[data-compensation="' + p.id + '"]').click();
+    if (profile === 'part') {
+      await admin.locator('[name=workHours]').fill('2');
+      await admin.locator('[name=workMinutes]').fill('30');
+    } else await admin.locator('[name=hours]').fill('3');
+    await admin.locator('[name=note]').fill('근무 확인');
+    await clickSubmit(admin);
+    await closed(admin);
+    assert.equal(
+      (await checked(admin, '/payroll/' + p.id + '?month=' + month)).base,
+      profile === 'part' ? 32500 : 120000,
+    );
+  }
+  assert.equal(
+    await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1),
+    true,
+  );
+  await ctx.close();
+  console.log(
+    'PASS: alphanumeric employee issuance, VAT supply, duet pair/signatures, fixed group wage, monthly membership replacement, 2h30 hourly and daily wage UI.',
+  );
+}
+
 try {
   browser = await chromium.launch({
     headless: true,
@@ -190,7 +378,7 @@ try {
   if (process.argv.includes('--firebase'))
     await admin.locator('[name=setupToken]').fill('browser-test-setup');
   await admin.locator('[name=name]').fill('가상 관리자');
-  await admin.locator('[name=username]').fill('demo.admin');
+  await admin.locator('[name=username]').fill('admin01');
   await admin.locator('[name=password]').fill(adminPw);
   await admin.locator('[name=confirm]').fill(adminPw);
   await admin.locator('#login-form button').click();
@@ -240,7 +428,7 @@ try {
   );
   await navigate(admin, 'people');
   await admin.locator('#new-account').click();
-  await admin.locator('[name=username]').fill('demo.teacher');
+  await admin.locator('[name=username]').fill('trainer01');
   const pid = await admin.locator('[name=personId] option').nth(1).getAttribute('value');
   await admin.locator('[name=personId]').selectOption(pid);
   await admin.locator('[name=password]').fill(temp);
@@ -256,7 +444,7 @@ try {
     teacher = await context.newPage();
   teacher.on('pageerror', (e) => errors.push(e.message));
   await teacher.goto(url);
-  await teacher.locator('[name=username]').fill('demo.teacher');
+  await teacher.locator('[name=username]').fill('trainer01');
   await teacher.locator('[name=password]').fill(temp);
   await teacher.locator('#login-form button').click();
   await teacher.waitForSelector('#password-form');
@@ -276,6 +464,7 @@ try {
   await teacher.locator('[name=paidDate]').fill('2026-10-02');
   await teacher.locator('[name=startDate]').fill('2026-10-02');
   await teacher.locator('[name=amount]').fill('3000000');
+  await teacher.locator('[name=vatIncluded]').selectOption('false');
   await teacher.locator('[name=quantity]').fill('30');
   await snap(
     teacher,
@@ -292,6 +481,7 @@ try {
   await teacher.locator('[name=paidDate]').fill('2026-10-03');
   await teacher.locator('[name=startDate]').fill('2026-10-03');
   await teacher.locator('[name=amount]').fill('2000000');
+  await teacher.locator('[name=vatIncluded]').selectOption('false');
   await teacher.locator('[name=quantity]').fill('20');
   await snap(
     teacher,
@@ -507,6 +697,8 @@ try {
   if (reportMode)
     await teacher.screenshot({ path: path.join(out, 'trainer-home-final.png'), fullPage: false });
   assert.equal(errors.length, 0, errors.join('\n'));
+  if (firebaseMode && process.argv.includes('--classes')) await extendedScenario(admin, browser);
+  assert.deepEqual(errors, []);
   console.log(
     'PASS: 10-member import, new/renewal, private mobile signing/server lock, late lesson, reconciliation, employee submit/admin approval/month close, frozen payout, audit, PWA cache policy.',
   );

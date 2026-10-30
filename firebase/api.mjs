@@ -1,3 +1,4 @@
+import { groupInstructor } from '../lib/profiles.mjs';
 import { Store, atomic } from './store.mjs';
 import {
   id,
@@ -15,6 +16,7 @@ import {
 import { headers } from '../lib/security.mjs';
 import * as d from './domain.mjs';
 import * as w from './workflow.mjs';
+import * as classes from './classes.mjs';
 import * as imp from './imports.mjs';
 import * as auth from './auth.mjs';
 export function createFirebaseApi(
@@ -65,6 +67,35 @@ export function createFirebaseApi(
         a = { ...a, member_lesson_id: l.id };
       }
       return memberPayload(s, a);
+    }
+    if (kind === 'membership-total') {
+      d.admin(a);
+      if (method === 'GET')
+        return (await s.get('membership_totals', m)) || { month: m, version: 0 };
+      if (method === 'PUT') return w.setMembershipTotal(s, a, b);
+    }
+    if (kind === 'group-rates') {
+      if (method === 'GET')
+        return { items: await classes.groupRates(s, a, url.searchParams.get('personId')) };
+      if (method === 'POST') return classes.createGroupRate(s, a, b.personId, b);
+    }
+    if (['group-lessons', 'duet-sessions'].includes(kind)) {
+      if (
+        a.role !== 'admin' &&
+        !(kind === 'group-lessons'
+          ? groupInstructor(await d.person(s, a, a.person_id))
+          : d.trainer(await d.person(s, a, a.person_id)))
+      )
+        fail(403, '본인 급여만 조회할 수 있습니다.');
+      if (kind === 'group-lessons') {
+        if (!key && method === 'GET') return classes.listGroups(s, a, url);
+        if (!key && method === 'POST') return classes.addGroupLesson(s, a, b);
+        if (key && method === 'PATCH') return classes.changeGroupLesson(s, a, key, b);
+      } else {
+        if (!key && method === 'POST') return classes.addDuet(s, a, b);
+        if (key && method === 'PATCH') return classes.changeDuet(s, a, key, b);
+        if (key && method === 'GET') return classes.duetDetail(s, a, key);
+      }
     }
     if (kind === 'people') {
       if (!key && method === 'GET') {
@@ -218,6 +249,7 @@ export function createFirebaseApi(
     if (kind === 'periods' && method === 'POST') return w.periodAction(s, a, month(key), b);
     if (kind === 'sales') {
       d.admin(a);
+      if (key === 'summary' && method === 'GET') return d.salesTotals(s, m);
       if (method === 'POST') return w.addSale(s, a, b);
       if (method === 'GET') {
         let rows = (await d.monthRows(s, 'sales', m)).sort((a, b) => a.id.localeCompare(b.id)),
@@ -564,6 +596,20 @@ export function createFirebaseApi(
       send(200, value);
     } catch (e) {
       let status = e.status || 500;
+      const authMessages = {
+        'auth/invalid-email': '아이디를 영문·숫자로 입력하세요. 이메일 주소는 필요하지 않습니다.',
+        'auth/invalid-password': '숫자 4자리 또는 6자 이상으로 비밀번호를 입력하세요.',
+        'auth/password-does-not-meet-requirements': 'Firebase 비밀번호 정책을 확인하세요.',
+        'auth/operation-not-allowed':
+          'Firebase Authentication에서 이메일/비밀번호 제공업체를 사용 설정하세요.',
+        'auth/insufficient-permission':
+          '서버의 Firebase Authentication 계정 생성 권한을 확인해야 합니다.',
+      };
+      if (authMessages[e.code]) {
+        status = e.code === 'auth/insufficient-permission' ? 403 : 400;
+        e.message = authMessages[e.code];
+      }
+
       if (e.code === 6 || e.code === 'already-exists') status = 409;
       if (e.code === 10 || e.code === 4) status = 409;
       if (status >= 500) console.error('firebase_request_error', requestId, e.code || e.name);

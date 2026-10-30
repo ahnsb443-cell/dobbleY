@@ -68,7 +68,11 @@ export async function settings(s, a, kind, pid, b) {
       id: key,
       person_id: pid,
       month: m,
-      hours100: integer(b.hours100, '근무시간', 0, 74400),
+      hours100: integer(b.hours100, '근무시간 / 일수', 0, p.profile === 'daily' ? 3100 : 74400),
+      ...(b.workMinutes === undefined
+        ? {}
+        : { work_minutes: integer(b.workMinutes, '월 근무 분', 0, 44640) }),
+
       extra: integer(b.extra, '수당'),
       deduction: integer(b.deduction, '공제'),
       note: text(b.note, '입력 사유', 300),
@@ -154,6 +158,15 @@ export async function addSale(s, a, b) {
     kind: b.kind,
     amount: b.kind === 'refund' ? -amount : amount,
     original_id: original?.id || null,
+    owner_profile:
+      original?.owner_profile ||
+      (b.personId ? (await person(s, a, b.personId, date.slice(0, 7))).profile : null),
+    team_pt_eligible:
+      original && typeof original.team_pt_eligible === 'boolean'
+        ? original.team_pt_eligible
+        : category === 'pt' &&
+          !!b.personId &&
+          (await person(s, a, b.personId, date.slice(0, 7))).profile !== 'manager',
     legacy_refund: b.kind === 'refund' && b.legacyRefund ? 1 : 0,
     note,
     version: 1,
@@ -343,4 +356,34 @@ export async function closeContract(s, a, key, b) {
   await s.put('contracts', key, { ...c, active: 0, version: c.version + 1 });
   await s.audit(a, 'contract-close', 'contract', key, text(b.reason, '종료 사유', 300));
   return { ok: true };
+}
+
+export async function setMembershipTotal(s, a, b) {
+  admin(a);
+  const m = month(b.month);
+  await guard(s, m, null, true);
+  const old = await s.get('membership_totals', m);
+  version(old || { version: 0 }, b.version);
+  if (typeof b.vatIncluded !== 'boolean') fail(400, 'VAT 포함 여부를 확인하세요.');
+  const raw = integer(b.amount, '월 멤버십 총매출', -10000000000, 10000000000),
+    amount = b.vatIncluded ? Math.round(raw / 1.1) : raw;
+  const r = {
+    id: m,
+    month: m,
+    raw_amount: raw,
+    amount,
+    vat_included: b.vatIncluded,
+    note: text(b.note, '집계 메모', 300),
+    version: (old?.version || 0) + 1,
+    updated_at: now(),
+    actor_id: a.id,
+  };
+  await s.put('membership_totals', m, r);
+  await s.audit(a, 'membership-month-total', 'membership-total', m, r.note, {
+    before: old?.amount ?? null,
+    after: amount,
+    raw,
+    vatIncluded: b.vatIncluded,
+  });
+  return r;
 }

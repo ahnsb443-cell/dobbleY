@@ -17,10 +17,16 @@ const norm = (s) =>
     .replace(/\s+/g, '');
 async function external(s, kind, ref, table) {
   const unique = await s.get('unique_keys', digest(kind + ':' + ref));
-  return unique ? await s.get(table, unique.target) : null;
+  return unique
+    ? await s.get(table, unique.target)
+    : table === 'members' && /^[0-9a-f-]{36}$/i.test(ref)
+      ? await s.get(table, ref)
+      : null;
 }
 export async function memberPreview(s, a, b) {
   admin(a);
+  const category = b.category || 'pt';
+  if (!['pt', 'pilates'].includes(category)) fail(400, '회원권 종목을 확인하세요.');
   const rows = [],
     errors = [],
     seen = new Set(),
@@ -61,6 +67,7 @@ export async function memberPreview(s, a, b) {
         c &&
         (!m ||
           c.member_id !== m.id ||
+          c.category !== category ||
           c.amount !== amount ||
           c.quantity !== quantity ||
           c.carry_used !== carryUsed ||
@@ -73,6 +80,7 @@ export async function memberPreview(s, a, b) {
         ref,
         name,
         personId: p[0].id,
+        category,
         personName: p[0].name,
         code,
         startDate: start,
@@ -115,7 +123,7 @@ export async function importMembers(s, a, b) {
     await addContract(s, a, {
       ...r,
       memberId: m.id,
-      category: 'pt',
+      category: r.category,
       saleType: 'new',
       externalRef: r.code,
     });

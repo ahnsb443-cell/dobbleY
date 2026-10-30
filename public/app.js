@@ -14,14 +14,22 @@ const money = (n) => new Intl.NumberFormat('ko-KR').format(n || 0),
       day: '2-digit',
     }).format(new Date()),
   labels = { attended: '출석', absent: '결석', reserved: '예약', cancelled: '취소' };
+function preferredMonth() {
+  try {
+    const saved = sessionStorage.getItem('double-y-month');
+    if (/^\d{4}-(0[1-9]|1[0-2])$/.test(saved || '')) return saved;
+  } catch {}
+  return [today().slice(0, 7), '2026-11'].sort().at(-1);
+}
 let user = null,
   csrf = '',
   setup = false,
   setupRemote = false,
+  extendedLessons = false,
   people = [],
   profiles = {},
   view = 'dashboard',
-  month = today().slice(0, 7),
+  month = preferredMonth(),
   data = {},
   sequence = 0,
   memberState = null,
@@ -30,6 +38,7 @@ const titles = {
   dashboard: '운영 현황',
   members: '회원 · 결제',
   lessons: '수업 · 회원 서명',
+  groups: '그룹레슨 · 시간급',
   payroll: '월별 급여 정산',
   source: '다짐 출석 대조',
   people: '구성원 · 계정',
@@ -39,11 +48,15 @@ const titles = {
   sales: '센터 매출 · 환불',
 };
 const isAdmin = () => user?.role === 'admin',
-  isTrainer = () => !!user?.person && !['fc', 'staff', 'part'].includes(user.person.profile),
+  isGroupOnly = () => user?.person?.profile === 'group',
+  isTrainer = () =>
+    !!user?.person && !['fc', 'staff', 'part', 'daily', 'group'].includes(user.person.profile),
   allowed = (v) =>
-    isAdmin() ||
-    ['payroll', 'password'].includes(v) ||
-    (isTrainer() && ['dashboard', 'members', 'lessons'].includes(v));
+    (v !== 'groups' || extendedLessons) &&
+    (isAdmin() ||
+      ['payroll', 'password'].includes(v) ||
+      (isGroupOnly() && v === 'groups') ||
+      (isTrainer() && ['dashboard', 'members', 'lessons', 'groups'].includes(v)));
 function toast(t) {
   $('#toast').textContent = t;
   $('#toast').classList.add('show');
@@ -89,17 +102,23 @@ function mobileNavigation() {
         ['lessons', '수업'],
         ['payroll', '정산'],
       ]
-    : isTrainer()
+    : isGroupOnly() && extendedLessons
       ? [
-          ['dashboard', '홈'],
-          ['members', '회원'],
-          ['lessons', '수업'],
-          ['payroll', '내 급여'],
-        ]
-      : [
+          ['groups', '그룹레슨'],
           ['payroll', '내 급여'],
           ['password', '비밀번호'],
-        ];
+        ]
+      : isTrainer()
+        ? [
+            ['dashboard', '홈'],
+            ['members', '회원'],
+            ['lessons', '수업'],
+            ['payroll', '내 급여'],
+          ]
+        : [
+            ['payroll', '내 급여'],
+            ['password', '비밀번호'],
+          ];
   return (
     '<nav class="mobile-nav" aria-label="주요 메뉴">' +
     tabs
@@ -130,7 +149,7 @@ function dashboardContent() {
     total = rows.reduce(
       (a, r) => ({
         revenue: a.revenue + r.revenue,
-        lessons: a.lessons + r.lessons,
+        lessons: a.lessons + r.lessons + (r.groupLessons || 0),
         unsigned: a.unsigned + (r.currentUnconfirmed ?? r.unconfirmed),
       }),
       { revenue: 0, lessons: 0, unsigned: 0 },
@@ -141,12 +160,16 @@ function dashboardContent() {
     recent = (data.recent?.items || []).filter((l) => l.status === 'active');
   const kpis = isAdmin()
     ? [
-        ['담당 PT·필라테스 매출', money(total.revenue) + '원', '공급가액 · 환불 반영'],
+        [
+          data.salesSummary ? '센터 총매출' : '담당 PT·필라테스 매출',
+          money(data.salesSummary?.centerNet ?? total.revenue) + '원',
+          '공급가액 · 환불 반영',
+        ],
         ['진행 수업', total.lessons + '회', month + ' 기준'],
         ['서명 확인 필요', total.unsigned + '건', '미서명 · 재확인 포함'],
       ]
     : [
-        ['이번 달 수업', (own?.lessons || 0) + '회', month + ' 기준'],
+        ['이번 달 수업', (own?.lessons || 0) + (own?.groupLessons || 0) + '회', month + ' 기준'],
         [
           '서명 확인 필요',
           (own?.currentUnconfirmed ?? own?.unconfirmed ?? 0) + '건',
@@ -179,6 +202,12 @@ function dashboardContent() {
       )
       .join('') +
     '</div>';
+  if (extendedLessons && !isAdmin())
+    html +=
+      '<div class="class-shortcuts"><button class="secondary" id="quick-duet">듀엣 수업 기록</button><button class="secondary" data-view="groups">그룹레슨 · 시간급</button></div>';
+  if (extendedLessons && isAdmin())
+    html +=
+      '<div class="class-shortcuts"><button class="primary" id="membership-record">당월 멤버십 총매출</button><button class="secondary" data-view="sales">센터 매출 현황</button></div>';
   if (isAdmin()) {
     html +=
       '<section class="panel priority-panel"><div class="panel-head"><div><h3>먼저 확인할 항목</h3><p>각 항목을 누르면 해당 기록으로 이동합니다.</p></div></div>' +
@@ -344,6 +373,409 @@ async function quickRecordForm() {
   );
 }
 
+function groupContent() {
+  const items = data.items || [],
+    rates = data.rates?.items || [];
+  return (
+    '<section class="panel"><div class="panel-head"><div><h3>그룹레슨 · 시간당 수업료</h3><p>참여인원과 관계없이 설정 단가 × 정산 인정시간으로 계산합니다.</p></div><div class="actions">' +
+    (isAdmin() ? '<button class="secondary" id="new-group-rate">선생님별 단가 설정</button>' : '') +
+    '<button class="primary" id="new-group-lesson">그룹레슨 기록</button></div></div>' +
+    table(
+      ['수업일 / 시간', '선생님 / 수업', '정산 인정시간', '시간당 단가', '수업료', '관리'],
+      items.map(
+        (r) =>
+          '<tr><td>' +
+          r.date +
+          '<small>' +
+          r.time +
+          '</small></td><td>' +
+          esc(r.instructor) +
+          '<small>' +
+          esc(r.name) +
+          (r.status === 'void' ? ' · 취소' : '') +
+          '</small></td><td>' +
+          r.billable_minutes +
+          '분</td><td>' +
+          money(r.hourly_rate) +
+          '원</td><td>' +
+          money(r.amount) +
+          '원</td><td>' +
+          (r.status === 'active'
+            ? '<button class="text-button" data-group-edit="' + r.id + '">정정</button>'
+            : '취소 기록') +
+          '</td></tr>',
+      ),
+    ) +
+    (!items.length
+      ? empty(
+          '이달 그룹레슨 기록이 없습니다',
+          '관리자가 단가를 설정하면 담당 선생님이 수업을 기록할 수 있습니다.',
+        )
+      : '') +
+    pager(data.next) +
+    '</section>' +
+    '<section class="panel"><div class="panel-head"><h3>설정된 그룹레슨 단가</h3></div>' +
+    table(
+      ['선생님 / 수업', '적용 시작일', '시간당 단가', '1회 정산 인정시간'],
+      rates.map(
+        (r) =>
+          '<tr><td>' +
+          esc(people.find((p) => p.id === r.person_id)?.name || '담당 선생님') +
+          '<small>' +
+          esc(r.name) +
+          '</small></td><td>' +
+          r.effective_date +
+          '</td><td>' +
+          money(r.hourly_rate) +
+          '원</td><td>' +
+          r.billable_minutes +
+          '분</td></tr>',
+      ),
+    ) +
+    '</section>'
+  );
+}
+function groupRateForm() {
+  modal(
+    '선생님별 그룹레슨 단가',
+    select('담당 선생님', 'personId', personOptions('', true)) +
+      field('수업명 (예: 그룹 필라테스)', 'name') +
+      field('적용 시작일', 'effectiveDate', 'date', [today(), month + '-01'].sort().at(-1)) +
+      field('시간당 수업료 (원)', 'hourlyRate', 'number', 35000, 'min="1" max="1000000" step="1"') +
+      field(
+        '수업 1회 정산 인정시간 (분)',
+        'billableMinutes',
+        'number',
+        60,
+        'min="1" max="480" step="1"',
+      ) +
+      '<p class="form-note">예: 실제 수업이 50분이어도 1시간 지급 약정이면 인정시간을 60분으로 설정합니다. 새 단가는 기존 기록을 자동 변경하지 않습니다.</p>' +
+      field('설정 사유', 'reason'),
+    async (f, k) => {
+      await api('/group-rates', {
+        method: 'POST',
+        key: k,
+        body: {
+          personId: f.get('personId'),
+          name: f.get('name'),
+          effectiveDate: f.get('effectiveDate'),
+          hourlyRate: Number(f.get('hourlyRate')),
+          billableMinutes: Number(f.get('billableMinutes')),
+          reason: f.get('reason'),
+        },
+      });
+      await load();
+    },
+  );
+}
+async function groupLessonForm() {
+  const rates = (await api('/group-rates')).items;
+  if (!rates.length) return toast('관리자가 선생님별 그룹레슨 단가를 먼저 설정해주세요.');
+  modal(
+    '그룹레슨 기록',
+    field('수업일', 'date', 'date', today(), 'max="' + today() + '"') +
+      select('적용 단가 / 수업', 'rateId', '') +
+      field('시작 시간', 'time', 'time', '10:00') +
+      field('참여인원 (정산과 무관)', 'participants', 'number', 0, 'min="0" max="500" step="1"') +
+      '<p class="form-note" id="group-fee-preview"></p>',
+    async (f, k) => {
+      await api('/group-lessons', {
+        method: 'POST',
+        key: k,
+        body: {
+          rateId: f.get('rateId'),
+          date: f.get('date'),
+          time: f.get('time'),
+          participants: Number(f.get('participants')),
+        },
+      });
+      await load();
+      toast('그룹레슨 수업료를 반영했습니다.');
+    },
+    '수업 기록',
+    () => {
+      function options() {
+        const date = $('[name=date]').value,
+          latest = new Map();
+        for (const r of [...rates].sort(
+          (a, b) =>
+            a.effective_date.localeCompare(b.effective_date) ||
+            a.created_at.localeCompare(b.created_at) ||
+            a.id.localeCompare(b.id),
+        )) {
+          if (r.effective_date <= date) latest.set(r.person_id + ':' + r.class_key, r);
+        }
+        $('[name=rateId]').innerHTML = [...latest.values()]
+          .map((r) =>
+            option(
+              r.id,
+              (people.find((p) => p.id === r.person_id)?.name || '') +
+                ' · ' +
+                r.name +
+                ' · 시간당 ' +
+                money(r.hourly_rate) +
+                '원 / ' +
+                r.billable_minutes +
+                '분',
+            ),
+          )
+          .join('');
+        preview();
+      }
+      function preview() {
+        const r = rates.find((r) => r.id === $('[name=rateId]').value);
+        $('#group-fee-preview').textContent = r
+          ? '이 수업료 ' +
+            money(Math.round((r.hourly_rate * r.billable_minutes) / 60)) +
+            '원 · 참여인원에 따라 바뀌지 않습니다.'
+          : '해당 날짜에 적용할 단가가 없습니다.';
+      }
+      $('[name=date]').onchange = options;
+      $('[name=rateId]').onchange = preview;
+      options();
+    },
+  );
+}
+function editGroupForm(row) {
+  modal(
+    '그룹레슨 기록 정정',
+    field('수업일', 'date', 'date', row.date, 'max="' + today() + '"') +
+      field('시작 시간', 'time', 'time', row.time) +
+      field(
+        '참여인원 (정산과 무관)',
+        'participants',
+        'number',
+        row.participants,
+        'min="0" max="500"',
+      ) +
+      (isAdmin()
+        ? field('시간당 수업료', 'hourlyRate', 'number', row.hourly_rate, 'min="1" max="1000000"') +
+          field(
+            '정산 인정시간 (분)',
+            'billableMinutes',
+            'number',
+            row.billable_minutes,
+            'min="1" max="480"',
+          )
+        : '') +
+      select('처리', 'void', option('false', '기록 정정') + option('true', '수업 취소')) +
+      field('정정 사유', 'reason'),
+    async (f, k) => {
+      await api('/group-lessons/' + row.id, {
+        method: 'PATCH',
+        key: k,
+        body: {
+          version: row.version,
+          date: f.get('date'),
+          time: f.get('time'),
+          participants: Number(f.get('participants')),
+          void: f.get('void') === 'true',
+          reason: f.get('reason'),
+          ...(isAdmin()
+            ? {
+                hourlyRate: Number(f.get('hourlyRate')),
+                billableMinutes: Number(f.get('billableMinutes')),
+              }
+            : {}),
+        },
+      });
+      await load();
+    },
+  );
+}
+async function duetForm() {
+  const members = (await api('/members?limit=100')).items;
+  modal(
+    '듀엣 수업 기록',
+    field('첫 번째 회원 이름 검색', 'firstSearch', 'search', '', 'autocomplete="off"') +
+      select('첫 번째 회원', 'firstMember', '') +
+      select('첫 번째 회원권', 'firstContract', '') +
+      field('두 번째 회원 이름 검색', 'secondSearch', 'search', '', 'autocomplete="off"') +
+      select('두 번째 회원', 'secondMember', '') +
+      select('두 번째 회원권', 'secondContract', '') +
+      field('수업일', 'date', 'date', today(), 'max="' + today() + '"') +
+      field('시작 시간', 'time', 'time', '10:00') +
+      '<p class="form-note">같은 선생님·같은 종목의 두 회원권을 선택합니다. 각 회원의 횟수는 1회씩 차감하고, 두 회당 단가 합계에 지급률을 곱합니다. 서명은 회원마다 받습니다.</p>',
+    async (f, k) => {
+      const r = await api('/duet-sessions', {
+        method: 'POST',
+        key: k,
+        body: {
+          contractIds: [f.get('firstContract'), f.get('secondContract')],
+          date: f.get('date'),
+          time: f.get('time'),
+        },
+      });
+      await load();
+      showDuetDetail(r.id);
+    },
+    '듀엣 수업 저장',
+    () => {
+      for (const prefix of ['first', 'second']) {
+        const member = $('[name=' + prefix + 'Member]'),
+          contracts = $('[name=' + prefix + 'Contract]'),
+          search = $('[name=' + prefix + 'Search]');
+        search.required = false;
+        let sequence = 0,
+          timer;
+        async function memberOptions(q = '') {
+          const current = ++sequence,
+            rows = q ? (await api('/members?limit=100&q=' + encodeURIComponent(q))).items : members;
+          if (current !== sequence || !member.isConnected) return;
+          member.innerHTML =
+            option('', '회원 선택') +
+            rows.map((m) => option(m.id, m.name + ' · #' + m.id.slice(0, 6))).join('');
+          contracts.innerHTML = '';
+        }
+        search.oninput = () => {
+          clearTimeout(timer);
+          timer = setTimeout(() => act(() => memberOptions(search.value.trim())), 250);
+        };
+        search.onkeydown = (e) => {
+          if (e.key === 'Enter') e.preventDefault();
+        };
+        member.onchange = () =>
+          act(async () => {
+            const current = ++sequence;
+            if (!member.value) {
+              contracts.innerHTML = '';
+              return;
+            }
+            const r = await api('/members/' + member.value);
+            if (current !== sequence || !contracts.isConnected) return;
+            contracts.innerHTML = r.contracts
+              .filter((c) => c.active && c.remaining > 0)
+              .map((c) =>
+                option(
+                  c.id,
+                  { pt: 'PT', pilates: '필라테스' }[c.category] +
+                    ' · ' +
+                    c.start_date +
+                    ' · 잔여 ' +
+                    c.remaining +
+                    '회 · 회당 ' +
+                    money(Math.round(c.amount / c.quantity)) +
+                    '원',
+                ),
+              )
+              .join('');
+          });
+        memberOptions();
+      }
+    },
+  );
+}
+async function showDuetDetail(key) {
+  const r = await api('/duet-sessions/' + key);
+  modal(
+    '듀엣 수업 · 회원별 서명',
+    '<p>' +
+      r.date +
+      ' ' +
+      r.time +
+      ' · ' +
+      (r.status === 'active' ? '진행' : '취소') +
+      '</p>' +
+      r.lessons
+        .map(
+          (l) =>
+            '<div class="member-choice"><span><b>' +
+            esc(l.member) +
+            '</b><small>회원별로 날짜·회차를 확인하고 서명합니다.</small></span>' +
+            (l.status === 'active'
+              ? '<button type="button" class="secondary" data-duet-sign="' +
+                l.id +
+                '">서명 확인</button>'
+              : '취소') +
+            '</div>',
+        )
+        .join('') +
+      (r.status === 'active'
+        ? '<button type="button" class="text-button" id="edit-duet">두 회원 기록 함께 정정</button>'
+        : ''),
+    () => {},
+    '닫기',
+    () => {
+      document.querySelectorAll('[data-duet-sign]').forEach(
+        (b) =>
+          (b.onclick = () =>
+            act(async () =>
+              showMember(
+                await api('/member-mode', {
+                  method: 'POST',
+                  body: { lessonId: b.dataset.duetSign },
+                }),
+              ),
+            )),
+      );
+      if ($('#edit-duet'))
+        $('#edit-duet').onclick = () =>
+          modal(
+            '듀엣 두 회원 함께 정정',
+            field('수업일', 'date', 'date', r.date, 'max="' + today() + '"') +
+              field('시작 시간', 'time', 'time', r.time) +
+              select(
+                '처리',
+                'void',
+                option('false', '날짜·시간 정정') + option('true', '두 회원 수업 취소'),
+              ) +
+              field('정정 사유', 'reason'),
+            async (f, k) => {
+              await api('/duet-sessions/' + key, {
+                method: 'PATCH',
+                key: k,
+                body: {
+                  version: r.version,
+                  date: f.get('date'),
+                  time: f.get('time'),
+                  void: f.get('void') === 'true',
+                  reason: f.get('reason'),
+                },
+              });
+              await load();
+            },
+          );
+    },
+  );
+}
+async function membershipForm() {
+  const current = await api('/membership-total?month=' + month);
+  modal(
+    '당월 멤버십 총매출',
+    field('대상 월', 'month', 'month', month, 'readonly') +
+      field(
+        '다짐의 당월 회원권 총매출 (환불 반영 후, 원)',
+        'amount',
+        'number',
+        current.raw_amount ?? '',
+        'step="1"',
+      ) +
+      select(
+        '금액 기준',
+        'vatIncluded',
+        option('true', 'VAT 포함 금액 (÷1.1)', current.vat_included !== false) +
+          option('false', 'VAT 제외 공급가액', current.vat_included === false),
+      ) +
+      field('집계 메모', 'note', 'text', current.note || '다짐 당월 회원권 매출 집계') +
+      '<p class="form-note">다짐 월 합계만 입력하면 됩니다. 이 금액은 FC팀장 멤버십 인센티브와 매니저 센터 총매출에 반영됩니다. 기존 개별 멤버십 장부와 중복 합산하지 않습니다. 수정 시 이 월 합계를 교체합니다.</p>',
+    async (f, k) => {
+      await api('/membership-total', {
+        method: 'PUT',
+        key: k,
+        body: {
+          month: f.get('month'),
+          version: current.version,
+          amount: Number(f.get('amount')),
+          vatIncluded: f.get('vatIncluded') === 'true',
+          note: f.get('note'),
+        },
+      });
+      await load();
+      toast('당월 멤버십 총매출을 반영했습니다.');
+    },
+    '월 총매출 저장',
+  );
+}
 async function api(path, { method = 'GET', body, key } = {}) {
   const response = await fetch('/api' + path, {
     method,
@@ -602,7 +1034,8 @@ async function initialize() {
   const r = await api('/people');
   people = r.items;
   profiles = r.profiles;
-  if (!allowed(view)) view = isTrainer() ? 'dashboard' : 'payroll';
+  if (!allowed(view))
+    view = isGroupOnly() && extendedLessons ? 'groups' : isTrainer() ? 'dashboard' : 'payroll';
   await load();
 }
 async function load(extra = '') {
@@ -610,18 +1043,32 @@ async function load(extra = '') {
   try {
     let r;
     if (view === 'dashboard') {
-      const [payroll, recent, reviewSummary] = await Promise.all([
+      const [payroll, recent, reviewSummary, salesSummary] = await Promise.all([
         api('/payroll?month=' + month),
         api('/lessons?month=' + month + '&limit=5&order=recent'),
         isAdmin() ? api('/reconcile?month=' + month + '&summary=1') : Promise.resolve(null),
+        isAdmin() && extendedLessons ? api('/sales/summary?month=' + month) : Promise.resolve(null),
       ]);
-      r = { ...payroll, recent, reviewSummary };
+      r = { ...payroll, recent, reviewSummary, salesSummary };
     } else if (view === 'payroll') r = await api('/payroll?month=' + month);
     else if (view === 'members') r = await api('/members?limit=20' + extra);
     else if (view === 'lessons') r = await api('/lessons?month=' + month + '&limit=30' + extra);
-    else if (view === 'sales') r = await api('/sales?month=' + month + extra);
-    else if (view === 'people') r = { accounts: await api('/accounts') };
-    else if (view === 'settings') r = await api('/rules');
+    else if (view === 'sales')
+      r = {
+        ...(await api('/sales?month=' + month + extra)),
+        summary: extendedLessons ? await api('/sales/summary?month=' + month) : null,
+      };
+    else if (view === 'groups')
+      r = {
+        ...(await api('/group-lessons?month=' + month + '&limit=30' + extra)),
+        rates: await api('/group-rates'),
+      };
+    else if (view === 'people') {
+      const latest = await api('/people');
+      people = latest.items;
+      profiles = latest.profiles;
+      r = { accounts: await api('/accounts') };
+    } else if (view === 'settings') r = await api('/rules');
     else if (view === 'source')
       r = {
         comparison: await api('/reconcile?month=' + month + extra),
@@ -712,6 +1159,9 @@ function render() {
   $('#month').onchange = (e) => {
     if (e.target.value) {
       month = e.target.value;
+      try {
+        sessionStorage.setItem('double-y-month', month);
+      } catch {}
       load();
     }
   };
@@ -732,6 +1182,7 @@ function render() {
 function content() {
   if (view === 'dashboard') return dashboardContent();
   if (view === 'payroll') return payrollContent();
+  if (view === 'groups') return groupContent();
   if (view === 'members') return membersContent();
   if (view === 'lessons') return lessonsContent();
   if (view === 'sales') return salesContent();
@@ -751,7 +1202,7 @@ function payrollContent() {
       (x, r) => ({
         net: x.net + r.net,
         sales: x.sales + r.revenue,
-        lessons: x.lessons + r.lessons,
+        lessons: x.lessons + r.lessons + (r.groupLessons || 0),
         unconfirmed: x.unconfirmed + (r.currentUnconfirmed ?? r.unconfirmed),
       }),
       { net: 0, sales: 0, lessons: 0, unconfirmed: 0 },
@@ -818,10 +1269,12 @@ function payrollContent() {
           r.lessons +
           '회 / ' +
           r.rate +
-          '%</td><td>' +
+          '%' +
+          (r.groupLessons ? '<small>그룹 ' + r.groupLessons + '회 별도</small>' : '') +
+          '</td><td>' +
           money(r.base) +
           '</td><td>' +
-          money(r.commission + r.bonus + r.incentive + r.extra) +
+          money(r.commission + (r.groupCommission || 0) + r.bonus + r.incentive + r.extra) +
           '</td><td>' +
           money(r.tax + r.deduction) +
           '</td><td class="amount">' +
@@ -906,7 +1359,11 @@ function membersContent() {
 }
 function lessonsContent() {
   return (
-    '<section class="panel"><div class="panel-head"><div><h3>수업 기록 · 서명 확인</h3><p>날짜와 회차는 구분됩니다. 미서명·재서명은 정산 승인 전 확인하세요.</p></div><button class="primary" id="go-members">회원 선택 · 수업 기록</button></div>' +
+    '<section class="panel"><div class="panel-head"><div><h3>수업 기록 · 서명 확인</h3><p>날짜와 회차는 구분됩니다. 미서명·재서명은 정산 승인 전 확인하세요.</p></div><div class="actions">' +
+    (extendedLessons
+      ? '<button class="secondary" id="new-duet">듀엣 기록</button><button class="secondary" data-view="groups">그룹레슨</button>'
+      : '') +
+    '<button class="primary" id="go-members">회원 선택 · 수업 기록</button></div></div>' +
     table(
       ['일자 / 시간', '회원', '담당', '상태', '회원 확인', '관리'],
       (data.items || []).map(
@@ -917,7 +1374,13 @@ function lessonsContent() {
           l.time +
           '</small></td><td><b>' +
           esc(l.member) +
-          '</b></td><td>' +
+          '</b>' +
+          (l.session_id
+            ? '<small><button class="text-button" data-duet="' +
+              l.session_id +
+              '">듀엣 · 함께 보기</button></small>'
+            : '') +
+          '</td><td>' +
           esc(l.instructor) +
           '</td><td>' +
           (l.status === 'void' ? '취소' : '진행') +
@@ -1155,7 +1618,7 @@ function registrationForm(existing = null) {
       select(
         '금액 기준',
         'vatIncluded',
-        option('false', 'VAT 제외 공급가액') + option('true', 'VAT 포함 결제금액 (÷1.1)'),
+        option('true', 'VAT 포함 결제금액 (÷1.1)') + option('false', 'VAT 제외 공급가액'),
       ) +
       field('등록 횟수', 'quantity', 'number', 20, 'min="1" max="10000" step="1"') +
       select('수업 종류', 'category', option('pt', 'PT') + option('pilates', '개인 필라테스')) +
@@ -1351,6 +1814,14 @@ async function payrollDetail(key) {
     ['수업료 (' + r.lessons + '회 · ' + r.rate + '%)', r.commission],
     ['매출 성과금', r.bonus],
     ['팀·센터 성과금', r.incentive],
+    [
+      '그룹레슨 (' +
+        (r.groupLessons || 0) +
+        '회 · ' +
+        ((r.groupMinutes || 0) / 60).toFixed(2) +
+        '시간)',
+      r.groupCommission || 0,
+    ],
     ['추가 수당', r.extra],
     ['지급총액', r.gross],
     ['원천징수', -r.tax],
@@ -1380,13 +1851,17 @@ async function payrollDetail(key) {
       r.unconfirmed +
       '건. 승인 시 다짐 대조·미서명 예외가 있으면 관리자가 사유를 남겨야 합니다. 이미 승인된 금액은 저장된 명세를 조회합니다.</p>' +
       table(
-        ['수업일', '회당 수업료', '서명'],
+        ['수업일 / 회원', '회당 수업료', '서명'],
         r.lines.map(
           (l) =>
             '<tr><td>' +
             l.date +
             ' ' +
             l.time +
+            '<small>' +
+            esc(l.memberName || '') +
+            (l.sessionId ? ' · 듀엣' : '') +
+            '</small>' +
             '</td><td>' +
             money(l.unit) +
             '</td><td>' +
@@ -1398,6 +1873,28 @@ async function payrollDetail(key) {
         ? '<p class="muted">상세 100건까지 표시했습니다. 총 ' +
           r.lessons +
           '회는 전체 월을 집계한 금액입니다.</p>'
+        : '') +
+      ((r.groupLines || []).length
+        ? '<h3>그룹레슨 강사료</h3>' +
+          table(
+            ['수업일 / 수업', '시간당 단가', '정산 인정시간', '수업료'],
+            r.groupLines.map(
+              (g) =>
+                '<tr><td>' +
+                g.date +
+                ' ' +
+                g.time +
+                '<small>' +
+                esc(g.name) +
+                '</small></td><td>' +
+                money(g.hourly_rate) +
+                '</td><td>' +
+                g.billable_minutes +
+                '분</td><td>' +
+                money(g.amount) +
+                '원</td></tr>',
+            ),
+          )
         : '') +
       '<div class="actions">' +
       buttons +
@@ -1442,7 +1939,7 @@ function newPersonForm() {
           .join(''),
       ) +
       field('입사 월', 'hireMonth', 'month', month) +
-      field('초기 기본급 / 알바 시급', 'base', 'number', 500000, 'min="0" step="1"') +
+      field('초기 기본급 / 알바 시급·일급', 'base', 'number', 500000, 'min="0" step="1"') +
       field('원천징수율 (%)', 'tax', 'number', 3.3, 'min="0" max="100" step=".01"'),
     async (f, k) => {
       await api('/people', {
@@ -1468,16 +1965,20 @@ function newPersonForm() {
     },
   );
 }
-function newAccountForm() {
+async function newAccountForm() {
+  const [latest, accounts] = await Promise.all([api('/people'), api('/accounts')]);
+  people = latest.items;
+  profiles = latest.profiles;
+  data.accounts = accounts;
   const taken = new Set((data.accounts?.items || []).map((a) => a.personId));
   modal(
     '로그인 계정 발급',
     field(
-      '로그인 아이디',
+      '로그인 아이디 (이메일 아님)',
       'username',
       'text',
       '',
-      'minlength="3" maxlength="40" pattern="[a-zA-Z0-9._-]+"',
+      'minlength="3" maxlength="40" pattern="[A-Za-z0-9]+" autocomplete="username" autocapitalize="none" spellcheck="false" title="영문·숫자 3~40자, 예: trainer01"',
     ) +
       select(
         '권한',
@@ -1493,7 +1994,9 @@ function newAccountForm() {
             .map((p) => option(p.id, p.name))
             .join(''),
       ) +
-      field('미연결 관리자 표시 이름', 'name') +
+      '<div id="unlinked-admin-name">' +
+      field('관리자 표시 이름', 'name') +
+      '</div>' +
       field(
         '임시 비밀번호',
         'password',
@@ -1501,14 +2004,22 @@ function newAccountForm() {
         '',
         'minlength="4" pattern="([0-9]{4}|.{6,128})" maxlength="128" autocomplete="new-password"',
       ) +
-      '<p class="form-note">숫자 4자리 또는 6자 이상으로 설정하세요. 직원이 처음 접속하면 새 비밀번호를 설정해야 합니다. 임시 비밀번호는 직원에게 개별 전달하세요.</p>',
+      '<p class="form-note">아이디는 이메일 없이 trainer01 같은 영문·숫자 3~40자로 입력하세요. 직원은 등록된 구성원을 선택해야 합니다. 비밀번호는 숫자 4자리 또는 6자 이상입니다. 직원이 처음 접속하면 새 비밀번호를 설정해야 합니다. 임시 비밀번호는 직원에게 개별 전달하세요.</p>',
     async (f, k) => {
       await api('/accounts', { method: 'POST', key: k, body: Object.fromEntries(f) });
       await load();
     },
     '계정 발급',
     () => {
-      $('[name=name]').required = false;
+      const update = () => {
+        const needed = $('[name=role]').value === 'admin' && !$('[name=personId]').value;
+        $('#unlinked-admin-name').hidden = !needed;
+        $('[name=name]').required = needed;
+        $('[name=personId]').required = $('[name=role]').value === 'employee';
+      };
+      $('[name=role]').onchange = update;
+      $('[name=personId]').onchange = update;
+      update();
     },
   );
 }
@@ -1551,13 +2062,41 @@ async function compensationForm(key) {
     r = await api('/people/' + key + '/compensation?month=' + month);
   modal(
     p.name + ' · ' + month + ' 월 입력',
-    field(
-      '월 근무시간 (알바만)',
-      'hours',
-      'number',
-      r.inputs.hours100 / 100,
-      'min="0" max="744" step=".25"',
-    ) +
+    (r.terms.profile === 'daily'
+      ? field(
+          '월 근무일수 (일급)',
+          'hours',
+          'number',
+          r.inputs.hours100 / 100,
+          'min="0" max="31" step=".5"',
+        )
+      : r.terms.profile === 'part' && extendedLessons
+        ? field(
+            '월 근무시간 · 시간',
+            'workHours',
+            'number',
+            Math.floor((r.inputs.work_minutes ?? Math.round((r.inputs.hours100 / 100) * 60)) / 60),
+            'min="0" max="744" step="1"',
+          ) +
+          field(
+            '추가 근무시간 · 분',
+            'workMinutes',
+            'number',
+            (r.inputs.work_minutes ?? Math.round((r.inputs.hours100 / 100) * 60)) % 60,
+            'min="0" max="59" step="1"',
+          )
+        : field(
+            '월 근무시간 (시급 알바)',
+            'hours',
+            'number',
+            r.inputs.hours100 / 100,
+            'min="0" max="744" step=".25"',
+          )) +
+      '<p class="form-note">' +
+      (r.terms.profile === 'daily'
+        ? '일급 × 근무일수로 정산합니다.'
+        : '시급 알바는 시간과 분을 나누어 입력합니다. 예: 2시간 30분 → 시급 × 2.5시간.') +
+      '</p>' +
       field('추가 수당', 'extra', 'number', r.inputs.extra, 'min="0" step="1"') +
       field(
         '별도 공제 / 이전 지급분 환수',
@@ -1567,7 +2106,7 @@ async function compensationForm(key) {
         'min="0" step="1"',
       ) +
       field('입력 사유', 'note', 'text', r.inputs.note) +
-      '<button type="button" class="text-button" id="edit-base">월 기본급·시급 / 세율 변경 →</button>',
+      '<button type="button" class="text-button" id="edit-base">월 기본급·시급·일급 / 세율 변경 →</button>',
     async (f, k) => {
       await api('/people/' + key + '/inputs', {
         method: 'PUT',
@@ -1575,7 +2114,15 @@ async function compensationForm(key) {
         body: {
           month,
           version: r.inputs.version,
-          hours100: Math.round(Number(f.get('hours')) * 100),
+          hours100:
+            r.terms.profile === 'part' && extendedLessons
+              ? Math.round(
+                  ((Number(f.get('workHours')) * 60 + Number(f.get('workMinutes'))) / 60) * 100,
+                )
+              : Math.round(Number(f.get('hours')) * 100),
+          ...(r.terms.profile === 'part' && extendedLessons
+            ? { workMinutes: Number(f.get('workHours')) * 60 + Number(f.get('workMinutes')) }
+            : {}),
           extra: Number(f.get('extra')),
           deduction: Number(f.get('deduction')),
           note: f.get('note'),
@@ -1596,7 +2143,13 @@ async function compensationForm(key) {
                 .map(([key, rule]) => option(key, rule.name, r.terms.profile === key))
                 .join(''),
             ) +
-            field('월 기본급 / 알바 시급', 'base', 'number', r.terms.base, 'min="0" step="1"') +
+            field(
+              '월 기본급 / 알바 시급·일급',
+              'base',
+              'number',
+              r.terms.base,
+              'min="0" step="1"',
+            ) +
             field(
               '원천징수율 (%)',
               'tax',
@@ -1682,16 +2235,24 @@ async function bulkImport() {
   const { header } = await api('/import/members');
   modal(
     '기존 회원 일괄 등록',
-    '<p class="form-note">엑셀에서 아래 열 순서로 복사하거나 UTF-8 CSV를 붙여넣으세요. 회원번호와 등록번호는 중복 방지를 위한 고유값입니다. 공급가액 기준이며 기존 회원권은 실제 과거 결제일을 입력합니다.</p><pre class="template">' +
+    (extendedLessons
+      ? select(
+          '가져올 회원권 종류',
+          'category',
+          option('pt', 'PT') + option('pilates', '개인·듀엣 필라테스'),
+        )
+      : '') +
+      '<p class="form-note">엑셀에서 아래 열 순서로 복사하거나 UTF-8 CSV를 붙여넣으세요. 회원번호와 등록번호는 중복 방지를 위한 고유값입니다. 공급가액 기준이며 기존 회원권은 실제 과거 결제일을 입력합니다. 11월 1일 이관 시 등록횟수는 원래 총횟수, 기진행횟수는 10월까지 사용한 횟수, 기준일은 2026-11-01로 입력합니다.</p><pre class="template">' +
       esc(header) +
       '</pre><label class="field">표 데이터<textarea name="text" rows="9" required placeholder="' +
       esc(header) +
       '"></textarea></label>',
     async (f) => {
       const original = f.get('text'),
+        category = f.get('category') || 'pt',
         preview = await api('/import/members/preview', {
           method: 'POST',
-          body: { text: original },
+          body: { text: original, category },
         });
       modal(
         '일괄 등록 미리보기',
@@ -1728,7 +2289,11 @@ async function bulkImport() {
           ),
         async (_, key) => {
           if (preview.errors.length) throw Error('오류를 수정하고 다시 분석하세요.');
-          const r = await api('/import/members', { method: 'POST', key, body: { text: original } });
+          const r = await api('/import/members', {
+            method: 'POST',
+            key,
+            body: { text: original, category },
+          });
           await load();
           toast('회원 ' + r.members + '명 · 회원권 ' + r.contracts + '건을 저장했습니다.');
         },
@@ -1745,8 +2310,9 @@ function sourceImport() {
       '<label class="field">예약 목록<textarea name="text" rows="10" required></textarea></label><p class="form-note">기록 200건씩 여러 번 추가할 수 있습니다. 같은 예약은 중복 제외하며 기존 상태가 달라지면 다음 화면에서 직접 선택해야 합니다.</p>',
     async (f) => {
       const original = f.get('text'),
+        category = f.get('category') || 'pt',
         personId = f.get('personId') || null,
-        r = await api('/source/preview', { method: 'POST', body: { text: original } });
+        r = await api('/source/preview', { method: 'POST', body: { text: original, category } });
       modal(
         '다짐 분석 결과',
         '<p>날짜 블록 ' +
@@ -1916,6 +2482,9 @@ function bindPage() {
           '수업료',
           '매출성과금',
           '팀/센터성과금',
+          '그룹수업수',
+          '그룹인정분',
+          '그룹강사료',
           '추가수당',
           '지급총액',
           '원천징수',
@@ -1933,6 +2502,9 @@ function bindPage() {
           r.commission,
           r.bonus,
           r.incentive,
+          r.groupLessons || 0,
+          r.groupMinutes || 0,
+          r.groupCommission || 0,
           r.extra,
           r.gross,
           r.tax,
@@ -1963,6 +2535,21 @@ function bindPage() {
     );
   });
   on('#quick-record', quickRecordForm);
+  on('#quick-duet', duetForm);
+  on('#new-duet', duetForm);
+  on('#new-group-rate', groupRateForm);
+  on('#new-group-lesson', groupLessonForm);
+  on('#membership-record', membershipForm);
+  document
+    .querySelectorAll('[data-group-edit]')
+    .forEach(
+      (b) =>
+        (b.onclick = () => editGroupForm(data.items.find((r) => r.id === b.dataset.groupEdit))),
+    );
+  document
+    .querySelectorAll('[data-duet]')
+    .forEach((b) => (b.onclick = () => act(() => showDuetDetail(b.dataset.duet))));
+
   on('#dashboard-reconcile', async () => {
     view = 'source';
     await load();
@@ -2007,6 +2594,7 @@ function bindPage() {
     (b) =>
       (b.onclick = () => {
         const l = data.items.find((l) => l.id === b.dataset.editLesson);
+        if (l.session_id) return act(() => showDuetDetail(l.session_id));
         modal(
           '수업 정정 · 사유 보관',
           field('수업일', 'date', 'date', l.date, 'max="' + today() + '"') +
@@ -2325,6 +2913,7 @@ async function boot() {
     const status = await api('/status');
     setup = status.setupRequired;
     setupRemote = status.remoteSetupTokenRequired;
+    extendedLessons = status.storage === 'firestore';
     if (setup) return loginPage();
     try {
       const r = await api('/me');
@@ -2348,7 +2937,29 @@ async function boot() {
 
 function salesContent() {
   return (
-    '<section class="panel"><div class="panel-head"><div><h3>월별 매출·환불 원장</h3><p>회원권 결제는 회원 등록 시 자동 반영됩니다. 같은 매출을 중복 입력하지 마세요.</p></div><button class="primary" id="new-sale">거래 기록</button></div>' +
+    (data.summary
+      ? '<div class="stats home-stats three">' +
+        [
+          ['멤버십 순매출', data.summary.membership],
+          ['센터 총 순매출', data.summary.centerNet],
+          ['PT팀 인센티브 기준 매출', data.summary.pt],
+        ]
+          .map(
+            ([label, value]) =>
+              '<article><span>' +
+              label +
+              '</span><h2>' +
+              money(value) +
+              '원</h2><small>공급가액 · 환불 반영</small></article>',
+          )
+          .join('') +
+        '</div>'
+      : '') +
+    '<section class="panel"><div class="panel-head"><div><h3>월별 매출·환불 원장</h3><p>회원권 결제는 회원 등록 시 자동 반영됩니다. 같은 매출을 중복 입력하지 마세요.</p></div>' +
+    (extendedLessons
+      ? '<button class="primary" id="membership-record">당월 멤버십 총매출</button>'
+      : '') +
+    '<button class="primary" id="new-sale">거래 기록</button></div>' +
     table(
       ['날짜', '종류', '담당 / 회원', '공급가액', '내용', '거래번호'],
       (data.items || []).map(
@@ -2384,7 +2995,7 @@ function saleForm() {
       select(
         '매출 종류',
         'category',
-        option('membership', '회원권 · 그룹 필라테스') +
+        (extendedLessons ? '' : option('membership', '회원권 · 그룹 필라테스')) +
           option('pt', 'PT 매출 조정') +
           option('pilates', '개인 필라테스 조정'),
       ) +
@@ -2448,7 +3059,7 @@ function transferForm(m) {
         .filter(
           (p) =>
             p.id !== m.person_id &&
-            !['fc', 'staff', 'part'].includes(p.profile) &&
+            !['fc', 'staff', 'part', 'daily', 'group'].includes(p.profile) &&
             (!p.end_date || p.end_date >= today()),
         )
         .map((p) => option(p.id, p.name))
