@@ -265,6 +265,16 @@ export function createFirebaseApi(
       const items = await imp.reconcile(s, m, url.searchParams.get('personId') || null),
         offset = Number(url.searchParams.get('offset') || 0);
       if (!Number.isSafeInteger(offset) || offset < 0) fail(400, '페이지를 확인하세요.');
+      if (url.searchParams.get('summary') === '1')
+        return {
+          total: items.length,
+          unresolved: items.filter(
+            (r) =>
+              r.kind !== 'matched' &&
+              !r.reviewed &&
+              !['source-reserved', 'source-cancelled', 'source-absent'].includes(r.kind),
+          ).length,
+        };
       return {
         items: items.slice(offset, offset + 100),
         nextOffset: offset + 100 < items.length ? offset + 100 : null,

@@ -365,8 +365,19 @@ export async function listLessons(s, a, url) {
   let rows = (await monthRows(s, 'lessons', m, pid)).sort(
     (a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id),
   );
+  const recent = url.searchParams.get('order') === 'recent';
+  if (recent)
+    rows.sort(
+      (a, b) =>
+        b.date.localeCompare(a.date) || b.time.localeCompare(a.time) || b.id.localeCompare(a.id),
+    );
   if (after)
-    rows = rows.filter((l) => l.date > after[0] || (l.date === after[0] && l.id > after[1]));
+    rows = rows.filter((l) =>
+      recent
+        ? l.date + 'T' + l.time < after[0] ||
+          (l.date + 'T' + l.time === after[0] && l.id < after[1])
+        : l.date > after[0] || (l.date === after[0] && l.id > after[1]),
+    );
   const out = [];
   for (const l of rows.slice(0, limit)) {
     const c = await required(s, 'contracts', l.contract_id);
@@ -379,7 +390,13 @@ export async function listLessons(s, a, url) {
       confirmation: await confirmation(s, l),
     });
   }
-  return { items: out, next: rows.length > limit ? cursor(out.at(-1).date, out.at(-1).id) : null };
+  return {
+    items: out,
+    next:
+      rows.length > limit
+        ? cursor(out.at(-1).date + (recent ? 'T' + out.at(-1).time : ''), out.at(-1).id)
+        : null,
+  };
 }
 export async function eligible(s, m) {
   const runs = await monthRows(s, 'payroll_runs', m),

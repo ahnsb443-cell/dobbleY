@@ -6,20 +6,14 @@
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#f6f7fb",
-  "theme_color": "#202131",
+  "background_color": "#ffffff",
+  "theme_color": "#ff6b22",
   "icons": [
     {
-      "src": "/icons/icon-192.png",
-      "sizes": "192x192",
+      "src": "/brand/logo.png",
+      "sizes": "1280x1280",
       "type": "image/png",
-      "purpose": "any maskable"
-    },
-    {
-      "src": "/icons/icon-512.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
     }
   ]
 }

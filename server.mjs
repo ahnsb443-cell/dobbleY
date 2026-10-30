@@ -26,6 +26,7 @@ export async function createApp({
     '/': 'public/index.html',
     '/index.html': 'public/index.html',
     '/app.js': 'public/app.js',
+    '/brand/logo.png': 'public/brand/logo.png',
     '/style.css': 'public/style.css',
     '/sw.js': 'public/sw.js',
     '/manifest.webmanifest': 'public/manifest.webmanifest',

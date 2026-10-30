@@ -29,10 +29,19 @@ const pw = () => randomBytes(20).toString('hex'),
 if (reportMode) await mkdir(out, { recursive: true });
 async function snap(page, title, text) {
   if (!reportMode) return;
-  await page.evaluate(() => document.activeElement?.blur());
+  await page.evaluate(() => {
+    document.activeElement?.blur();
+    document.querySelector('#toast')?.classList.remove('show');
+  });
   const file = String(steps.length + 1).padStart(2, '0') + '.png';
   await page.screenshot({ path: path.join(out, file), fullPage: false });
   steps.push({ title, text, file });
+}
+async function navigate(page, target) {
+  const mobile = page.viewportSize().width <= 760;
+  await page
+    .locator((mobile ? '.mobile-nav' : '.sidebar nav') + ' [data-view="' + target + '"]')
+    .click();
 }
 async function clickSubmit(page) {
   await page.locator('#modal-form button[type=submit]').click();
@@ -86,12 +95,29 @@ async function returnTeacher(page) {
   await page.waitForFunction(() => document.querySelector('#member-screen').hidden);
 }
 async function record(page, context, name, date, capture = false) {
-  await page.locator('[data-view=members]').first().click();
-  await page.waitForSelector('.member-card');
-  const card = page
-    .locator('.member-card')
-    .filter({ has: page.getByRole('heading', { name, exact: true }) });
-  await card.locator('[data-complete]').click();
+  if (capture) {
+    await navigate(page, 'dashboard');
+    await page.waitForSelector('#quick-record');
+    if (reportMode) {
+      await page.evaluate(() => document.querySelector('#toast')?.classList.remove('show'));
+      await page.screenshot({ path: path.join(out, 'trainer-home.png'), fullPage: false });
+    }
+    assert.equal(
+      await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1),
+      true,
+      'mobile home must fit viewport',
+    );
+    await page.locator('#quick-record').click();
+    await page.locator('#quick-member-search').fill(name);
+    await page.locator('[data-quick-member]').filter({ hasText: name }).click();
+  } else {
+    await navigate(page, 'members');
+    await page.waitForSelector('.member-card');
+    const card = page
+      .locator('.member-card')
+      .filter({ has: page.getByRole('heading', { name, exact: true }) });
+    await card.locator('[data-complete]').click();
+  }
   await page.locator('[name=date]').fill(date);
   await page.locator('[name=time]').fill('10:00');
   await clickSubmit(page);
@@ -171,14 +197,14 @@ try {
   await admin.waitForSelector('[data-view=people]');
   await admin.locator('#month').fill('2026-10');
   await admin.locator('#month').dispatchEvent('change');
-  await admin.locator('[data-view=people]').first().click();
+  await navigate(admin, 'people');
   await admin.locator('#new-person').click();
   await admin.locator('[name=name]').fill('가상 민준쌤');
   await admin.locator('[name=profile]').selectOption('morning');
   await admin.locator('[name=hireMonth]').fill('2026-09');
   await clickSubmit(admin);
   await closed(admin);
-  await admin.locator('[data-view=members]').first().click();
+  await navigate(admin, 'members');
   await admin.locator('#bulk-import').click();
   const header =
       '회원번호\t회원명\t담당\t등록번호\t등록일\t결제일\t공급가액\t등록횟수\t기진행횟수\t기준일',
@@ -212,7 +238,7 @@ try {
     '2. 한 선생님에게 기존 회원 10명 배정',
     '관리자가 한 번 옮기면 선생님은 기존 회원을 다시 입력할 필요가 없습니다. 회원별 잔여횟수와 별도 회원권을 유지합니다.',
   );
-  await admin.locator('[data-view=people]').first().click();
+  await navigate(admin, 'people');
   await admin.locator('#new-account').click();
   await admin.locator('[name=username]').fill('demo.teacher');
   const pid = await admin.locator('[name=personId] option').nth(1).getAttribute('value');
@@ -241,7 +267,7 @@ try {
   await teacher.waitForSelector('#month');
   await teacher.locator('#month').fill('2026-10');
   await teacher.locator('#month').dispatchEvent('change');
-  await teacher.locator('[data-view=members]').first().click();
+  await navigate(teacher, 'members');
   await teacher.waitForSelector('.member-card');
   assert.equal(await teacher.locator('[data-view=people]').count(), 0);
   assert.equal(await teacher.locator('.member-card').count(), 10);
@@ -277,7 +303,7 @@ try {
   assert.equal(await teacher.locator('.member-card').count(), 11);
   await record(teacher, context, '가상 회원01', '2026-10-07', true);
   await record(teacher, context, '가상 신규회원', '2026-10-08');
-  await teacher.locator('[data-view=payroll]').first().click();
+  await navigate(teacher, 'payroll');
   assert.match(await teacher.locator('table').textContent(), /580,200/);
   const source = (member, date, status) =>
     '2026.10.' +
@@ -287,7 +313,7 @@ try {
     ' ' +
     status +
     ' 변경 010-0000-0000 1:1 PT 30회';
-  await admin.locator('[data-view=source]').first().click();
+  await navigate(admin, 'source');
   await admin.locator('#source-import').click();
   await admin
     .locator('[name=text]')
@@ -313,8 +339,8 @@ try {
     '9. 누락 수업을 과거 날짜로 추가·서명',
     '실제 진행을 확인한 뒤 회원02의 10월 9일 수업을 나중에 기록했습니다. 수업일은 9일, 서명 시각은 실제 저장일입니다. 기존 수업이 있으면 중복으로 추가하지 않습니다.',
   );
-  await teacher.locator('[data-view=payroll]').first().click();
-  await teacher.locator('[data-payroll]').click();
+  await navigate(teacher, 'payroll');
+  await teacher.locator('[data-payroll]:visible').click();
   await teacher.waitForSelector('#modal .statement');
   assert.match(await teacher.locator('#modal').textContent(), /628,550/);
   await snap(
@@ -335,8 +361,8 @@ try {
     .fill('가상 회원 서명과 실제 수업 확인, 다짐 출입 출석 누락 확인');
   await clickSubmit(admin);
   await closed(admin);
-  await admin.locator('[data-view=payroll]').first().click();
-  await admin.locator('[data-payroll]').click();
+  await navigate(admin, 'payroll');
+  await admin.locator('[data-payroll]:visible').click();
   await admin.locator('#approve-payroll').click();
   await admin.locator('[name=note]').fill('수업·서명 3건과 다짐 대조 확인');
   await clickSubmit(admin);
@@ -374,7 +400,7 @@ try {
   assert.equal(fixed.body.items[0].frozen, true);
   const audit = await request(admin, '/audit');
   assert.ok(audit.body.items.some((x) => x.action === 'close'));
-  await admin.locator('[data-view=audit]').first().click();
+  await navigate(admin, 'audit');
   await snap(
     admin,
     '12. 감사 이력과 정정 절차',
@@ -455,6 +481,32 @@ try {
       ),
     );
   }
+  await navigate(admin, 'dashboard');
+  await admin.waitForSelector('.priority-panel');
+  if (reportMode)
+    await admin.screenshot({ path: path.join(out, 'admin-home.png'), fullPage: true });
+  await navigate(teacher, 'dashboard');
+  await teacher.waitForSelector('.recent-lesson');
+  assert.match(await teacher.locator('.recent-lesson').first().textContent(), /10.09/);
+  await teacher.locator('#menu-toggle').click();
+  assert.equal(await teacher.locator('.sidebar').evaluate((el) => el.inert), false);
+  await teacher.keyboard.press('Escape');
+  assert.equal(await teacher.locator('.sidebar').evaluate((el) => el.inert), true);
+  assert.equal(
+    await teacher.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1),
+    true,
+  );
+  await teacher.setViewportSize({ width: 320, height: 740 });
+  assert.equal(
+    await teacher.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1),
+    true,
+    '320px home',
+  );
+  await teacher.setViewportSize({ width: 390, height: 844 });
+
+  if (reportMode)
+    await teacher.screenshot({ path: path.join(out, 'trainer-home-final.png'), fullPage: false });
+  assert.equal(errors.length, 0, errors.join('\n'));
   console.log(
     'PASS: 10-member import, new/renewal, private mobile signing/server lock, late lesson, reconciliation, employee submit/admin approval/month close, frozen payout, audit, PWA cache policy.',
   );

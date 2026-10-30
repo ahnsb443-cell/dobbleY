@@ -285,6 +285,13 @@ test(
         );
         const comparison = (await ok('/reconcile?month=2026-10', { auth: owner })).body;
         assert.ok(comparison.total >= 201);
+        const summary = (await ok('/reconcile?month=2026-10&summary=1', { auth: owner })).body;
+        assert.equal(summary.total, comparison.total);
+        assert.equal(summary.unresolved, 201);
+        assert.equal(
+          (await req('/reconcile?month=2026-10&summary=1', { auth: teacher })).status,
+          403,
+        );
       });
       await t.test('제출→예외 사유 승인→마감 후 금액 잠금, 누락 서명은 추후 수령', async () => {
         const late = (
@@ -555,6 +562,35 @@ test(
         },
       );
 
+      await t.test(
+        '최근 수업은 같은 날짜도 시간 역순이며 다음 페이지가 중복되지 않음',
+        async () => {
+          const target = (await new Store(svc.db).get('contracts', c.id)).person_id;
+          for (const time of ['14:00', '18:00'])
+            await ok('/lessons', {
+              method: 'POST',
+              auth: owner,
+              body: { contractId: c.id, date: '2026-10-20', time },
+            });
+          const first = (
+            await ok('/lessons?month=2026-10&order=recent&limit=1&personId=' + target, {
+              auth: owner,
+            })
+          ).body;
+          assert.equal(first.items[0].time, '18:00');
+          const second = (
+            await ok(
+              '/lessons?month=2026-10&order=recent&limit=1&personId=' +
+                target +
+                '&after=' +
+                encodeURIComponent(first.next),
+              { auth: owner },
+            )
+          ).body;
+          assert.equal(second.items[0].time, '14:00');
+          assert.notEqual(first.items[0].id, second.items[0].id);
+        },
+      );
       await t.test(
         'Firestore 이관용 내보내기·체크섬·격리 복원, 기존 자료 덮어쓰기 차단',
         async () => {

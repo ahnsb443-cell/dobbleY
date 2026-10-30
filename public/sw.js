@@ -1,12 +1,18 @@
-const CACHE = 'double-y-static-v1';
+const CACHE = 'double-y-static-orange-v3';
 const FILES = [
   '/offline.html',
+  '/brand/logo.png',
   '/icons/icon-192.png',
   '/icons/icon-512.png',
   '/manifest.webmanifest',
 ];
 self.addEventListener('install', (e) =>
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES))),
+  e.waitUntil(
+    caches
+      .open(CACHE)
+      .then((c) => c.addAll(FILES))
+      .then(() => self.skipWaiting()),
+  ),
 );
 self.addEventListener('activate', (e) =>
   e.waitUntil(

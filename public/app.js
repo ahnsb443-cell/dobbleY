@@ -38,18 +38,6 @@ const titles = {
   password: '내 비밀번호',
   sales: '센터 매출 · 환불',
 };
-const symbols = {
-  dashboard: '◫',
-  members: '♧',
-  lessons: '✎',
-  payroll: '▤',
-  source: '⇄',
-  people: '♙',
-  settings: '⚙',
-  audit: '◷',
-  password: '⚿',
-  sales: '↗',
-};
 const isAdmin = () => user?.role === 'admin',
   isTrainer = () => !!user?.person && !['fc', 'staff', 'part'].includes(user.person.profile),
   allowed = (v) =>
@@ -61,6 +49,301 @@ function toast(t) {
   $('#toast').classList.add('show');
   setTimeout(() => $('#toast').classList.remove('show'), 4000);
 }
+const iconPaths = {
+  dashboard: '<path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1Z"/>',
+  members:
+    '<circle cx="9" cy="8" r="4"/><path d="M2 21v-2a7 7 0 0 1 14 0v2M17 4a4 4 0 0 1 0 8m2 3a6 6 0 0 1 3 6"/>',
+  lessons:
+    '<rect x="3" y="5" width="18" height="16" rx="3"/><path d="M7 3v4m10-4v4M3 11h18m-13 5 3 3 5-5"/>',
+  payroll:
+    '<rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18m12 4h6m-6 3h3M6 3h12"/>',
+  source: '<path d="M4 7h16m-4-4 4 4-4 4M20 17H4m4-4-4 4 4 4"/>',
+  people:
+    '<rect x="3" y="4" width="18" height="17" rx="3"/><circle cx="9" cy="10" r="2"/><path d="M6 17a3 3 0 0 1 6 0m3-8h3m-3 4h3"/>',
+  settings: '<path d="M5 4v16m7-16v16m7-16v16M2 8h6m1 8h6m1-10h6"/>',
+  audit:
+    '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Zm0 0v6h6M8 13h8m-8 4h5"/>',
+  password:
+    '<rect x="4" y="10" width="16" height="12" rx="3"/><path d="M8 10V6a4 4 0 0 1 8 0v4m-4 5v3"/>',
+  sales: '<path d="M4 3v18h18M8 15l4-5 4 3 5-8"/>',
+};
+function icon(name) {
+  return (
+    '<svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    (iconPaths[name] || iconPaths.dashboard) +
+    '</svg>'
+  );
+}
+function logo(className = '') {
+  return (
+    '<img class="brand-logo ' +
+    className +
+    '" src="/brand/logo.png" alt="더블와이짐" width="1280" height="1280">'
+  );
+}
+function mobileNavigation() {
+  const tabs = isAdmin()
+    ? [
+        ['dashboard', '홈'],
+        ['members', '회원'],
+        ['lessons', '수업'],
+        ['payroll', '정산'],
+      ]
+    : isTrainer()
+      ? [
+          ['dashboard', '홈'],
+          ['members', '회원'],
+          ['lessons', '수업'],
+          ['payroll', '내 급여'],
+        ]
+      : [
+          ['payroll', '내 급여'],
+          ['password', '비밀번호'],
+        ];
+  return (
+    '<nav class="mobile-nav" aria-label="주요 메뉴">' +
+    tabs
+      .map(
+        ([v, label]) =>
+          '<button data-view="' +
+          v +
+          '" class="' +
+          (view === v ? 'active' : '') +
+          '" ' +
+          (view === v ? 'aria-current="page"' : '') +
+          '>' +
+          icon(v) +
+          '<span>' +
+          label +
+          '</span></button>',
+      )
+      .join('') +
+    (isAdmin()
+      ? '<button id="mobile-more">' + icon('settings') + '<span>전체 메뉴</span></button>'
+      : '') +
+    '</nav>'
+  );
+}
+function dashboardContent() {
+  const rows = data.items || [],
+    own = rows.find((r) => r.personId === user.personId),
+    total = rows.reduce(
+      (a, r) => ({
+        revenue: a.revenue + r.revenue,
+        lessons: a.lessons + r.lessons,
+        unsigned: a.unsigned + (r.currentUnconfirmed ?? r.unconfirmed),
+      }),
+      { revenue: 0, lessons: 0, unsigned: 0 },
+    ),
+    pending = rows.filter((r) => r.state === 'draft').length,
+    unresolved = data.reviewSummary?.unresolved || 0,
+    closed = data.period?.state === 'closed',
+    recent = (data.recent?.items || []).filter((l) => l.status === 'active');
+  const kpis = isAdmin()
+    ? [
+        ['담당 PT·필라테스 매출', money(total.revenue) + '원', '공급가액 · 환불 반영'],
+        ['진행 수업', total.lessons + '회', month + ' 기준'],
+        ['서명 확인 필요', total.unsigned + '건', '미서명 · 재확인 포함'],
+      ]
+    : [
+        ['이번 달 수업', (own?.lessons || 0) + '회', month + ' 기준'],
+        [
+          '서명 확인 필요',
+          (own?.currentUnconfirmed ?? own?.unconfirmed ?? 0) + '건',
+          '누락된 서명도 받을 수 있어요',
+        ],
+      ];
+  let html =
+    '<section class="home-welcome"><div><span class="eyebrow">' +
+    (isAdmin() ? 'MANAGER OVERVIEW' : 'MY WORKSPACE') +
+    '</span><h2>' +
+    (isAdmin()
+      ? '한눈에 보는 이번 달 운영'
+      : esc(user.name) + ' 선생님,<br>수업 기록부터 시작하세요') +
+    '</h2><p>' +
+    (isAdmin()
+      ? '확인이 필요한 기록을 먼저 살펴보세요.'
+      : '수업을 기록하고 회원님께 바로 서명받으세요.') +
+    '</p></div><button class="primary hero-action" id="' +
+    (isAdmin() ? 'dashboard-reconcile' : 'quick-record') +
+    '">' +
+    (isAdmin() ? icon('source') + '다짐 기록 대조' : '+ 수업 기록 · 서명받기') +
+    '</button></section>' +
+    '<div class="stats home-stats ' +
+    (isAdmin() ? 'three' : 'two') +
+    '">' +
+    kpis
+      .map(
+        ([k, v, n]) =>
+          '<article><span>' + k + '</span><h2>' + v + '</h2><small>' + n + '</small></article>',
+      )
+      .join('') +
+    '</div>';
+  if (isAdmin()) {
+    html +=
+      '<section class="panel priority-panel"><div class="panel-head"><div><h3>먼저 확인할 항목</h3><p>각 항목을 누르면 해당 기록으로 이동합니다.</p></div></div>' +
+      [
+        ['lessons', '미서명 · 재확인 수업', total.unsigned + '건'],
+        ['source', '다짐 대조 불일치', unresolved + '건'],
+        ['payroll', '급여 제출 대기', pending + '명'],
+      ]
+        .map(
+          ([v, label, count]) =>
+            '<button class="priority-row" data-view="' +
+            v +
+            '"><span class="priority-icon">' +
+            icon(v) +
+            '</span><b>' +
+            label +
+            '</b><span class="priority-count">' +
+            count +
+            '</span><span aria-hidden="true">›</span></button>',
+        )
+        .join('') +
+      '</section>' +
+      '<section class="panel"><div class="panel-head"><div><h3>직원별 정산 현황</h3><p>' +
+      (closed ? '마감된 월입니다. 확정 금액이 유지됩니다.' : '직원 제출 → 관리자 확인 → 월 마감') +
+      '</p></div><button class="secondary" data-view="payroll">전체 정산 보기</button></div>' +
+      table(
+        ['직원', '수업', '서명 확인', '예상 / 확정 정산', '상태'],
+        rows.map(
+          (r) =>
+            '<tr><td><b>' +
+            esc(r.name) +
+            '</b><small>' +
+            esc(profiles[r.profile]?.name) +
+            '</small></td><td>' +
+            r.lessons +
+            '회</td><td>' +
+            (r.currentUnconfirmed ?? r.unconfirmed) +
+            '건</td><td><button class="text-button amount" data-payroll="' +
+            r.personId +
+            '">' +
+            money(r.net) +
+            '원 ›</button></td><td><span class="status-chip ' +
+            r.state +
+            '">' +
+            { draft: '작성 중', submitted: '제출 완료', approved: '승인 완료' }[r.state] +
+            '</span></td></tr>',
+        ),
+      ) +
+      (!rows.length
+        ? empty('등록된 직원이 없습니다', '구성원 · 계정 메뉴에서 첫 직원을 등록하세요.')
+        : '') +
+      '</section>';
+  } else {
+    html +=
+      '<section class="panel recent-panel"><div class="panel-head"><div><h3>최근 수업</h3><p>선택한 달에 기록한 최근 수업입니다.</p></div><button class="text-button" data-view="lessons">전체 보기 ›</button></div>' +
+      (recent.length
+        ? recent
+            .map(
+              (l) =>
+                '<article class="recent-lesson"><div class="lesson-avatar">' +
+                esc(l.member.slice(0, 1)) +
+                '</div><div class="recent-person"><b>' +
+                esc(l.member) +
+                '</b><small>' +
+                l.date.slice(5).replace('-', '.') +
+                ' · ' +
+                l.time +
+                '</small></div>' +
+                '<button class="' +
+                (l.confirmation.state === 'signed'
+                  ? 'signature-status signed'
+                  : 'secondary needs-sign') +
+                '" ' +
+                (l.confirmation.state === 'signed' ? 'data-history' : 'data-sign') +
+                '="' +
+                l.id +
+                '">' +
+                (l.confirmation.state === 'signed'
+                  ? '서명 완료'
+                  : l.confirmation.state === 'stale'
+                    ? '재서명 받기'
+                    : '서명 받기') +
+                '</button></article>',
+            )
+            .join('')
+        : empty(
+            '아직 기록한 수업이 없어요',
+            '수업 기록 · 서명받기 버튼으로 첫 수업을 남겨보세요.',
+          )) +
+      '</section>' +
+      '<section class="salary-preview"><div>' +
+      icon('payroll') +
+      '<span>' +
+      (closed ? '이번 달 확정 정산' : '이번 달 예상 정산') +
+      '</span><h2>' +
+      money(own?.net || 0) +
+      '<small>원</small></h2><p>' +
+      (closed
+        ? '관리자가 마감한 확정 금액입니다.'
+        : '마감 전 예상 금액이며 월말 확인 후 확정됩니다.') +
+      '</p></div><button class="text-button" ' +
+      (own ? 'data-payroll="' + own.personId + '"' : 'data-view="payroll"') +
+      '>명세서 보기 ›</button></section>';
+  }
+  return html;
+}
+async function quickRecordForm() {
+  let searchSequence = 0;
+  modal(
+    '수업을 진행한 회원 선택',
+    '<label class="field">회원 이름<input id="quick-member-search" type="search" placeholder="이름으로 빠르게 찾기" autocomplete="off"></label><div id="quick-member-results" class="quick-member-results" aria-live="polite"></div>',
+    () => {},
+    '닫기',
+    () => {
+      const input = $('#quick-member-search'),
+        host = $('#quick-member-results');
+      let timer;
+      async function search() {
+        const current = ++searchSequence;
+        host.innerHTML = '<p class="muted">회원 목록을 불러오는 중입니다.</p>';
+        try {
+          const r = await api('/members?limit=8&q=' + encodeURIComponent(input.value.trim()));
+          if (current !== searchSequence || !host.isConnected) return;
+          host.innerHTML = r.items.length
+            ? r.items
+                .map(
+                  (m) =>
+                    '<button type="button" class="member-choice" data-quick-member="' +
+                    m.id +
+                    '"><span class="lesson-avatar">' +
+                    esc(m.name.slice(0, 1)) +
+                    '</span><span><b>' +
+                    esc(m.name) +
+                    '</b><small>잔여 ' +
+                    m.remaining +
+                    '회 · #' +
+                    m.id.slice(0, 6) +
+                    '</small></span><span aria-hidden="true">›</span></button>',
+                )
+                .join('')
+            : empty('검색된 회원이 없습니다', '회원 · 결제 메뉴에서 등록 상태를 확인하세요.');
+          host
+            .querySelectorAll('[data-quick-member]')
+            .forEach((b) => (b.onclick = () => act(() => completeForm(b.dataset.quickMember))));
+        } catch (e) {
+          if (host.isConnected) host.textContent = e.message;
+        }
+      }
+      input.onkeydown = (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          clearTimeout(timer);
+          search();
+        }
+      };
+      input.oninput = () => {
+        clearTimeout(timer);
+        timer = setTimeout(search, 250);
+      };
+      search();
+      input.focus();
+    },
+  );
+}
+
 async function api(path, { method = 'GET', body, key } = {}) {
   const response = await fetch('/api' + path, {
     method,
@@ -201,9 +484,12 @@ function confirmAction(title, handler) {
   modal(title, field('확인/변경 사유', 'note', 'text', '', 'maxlength="500"'), handler, '확인');
 }
 function loginPage() {
+  document.body.classList.remove('menu-open');
   const first = setup;
   $('#app').innerHTML =
-    '<div class="auth"><div class="auth-brand">DOUBLE Y<small>언주역점 · PAYROLL WORKSPACE</small></div><section class="auth-card"><span class="eyebrow">YOUR PERSONAL WORKSPACE</span><h1>' +
+    '<div class="auth"><div class="auth-brand">' +
+    logo() +
+    '<span>언주역점 · 페이롤</span></div><section class="auth-card"><span class="eyebrow">YOUR PERSONAL WORKSPACE</span><h1>' +
     (first ? '관리자 계정 만들기' : '더블와이팀, 반가워요') +
     '</h1><p>' +
     (first
@@ -306,6 +592,7 @@ function passwordPage(forced = false) {
     };
 }
 async function initialize() {
+  window.scrollTo(0, 0);
   const r = await api('/people');
   people = r.items;
   profiles = r.profiles;
@@ -316,7 +603,14 @@ async function load(extra = '') {
   const seq = ++sequence;
   try {
     let r;
-    if (view === 'dashboard' || view === 'payroll') r = await api('/payroll?month=' + month);
+    if (view === 'dashboard') {
+      const [payroll, recent, reviewSummary] = await Promise.all([
+        api('/payroll?month=' + month),
+        api('/lessons?month=' + month + '&limit=5&order=recent'),
+        isAdmin() ? api('/reconcile?month=' + month + '&summary=1') : Promise.resolve(null),
+      ]);
+      r = { ...payroll, recent, reviewSummary };
+    } else if (view === 'payroll') r = await api('/payroll?month=' + month);
     else if (view === 'members') r = await api('/members?limit=20' + extra);
     else if (view === 'lessons') r = await api('/lessons?month=' + month + '&limit=30' + extra);
     else if (view === 'sales') r = await api('/sales?month=' + month + extra);
@@ -342,7 +636,9 @@ function render() {
   if (!user) return loginPage();
   const nav = Object.keys(titles).filter(allowed);
   $('#app').innerHTML =
-    '<aside class="sidebar"><a class="brand" href="#" data-view="dashboard"><b>W<span>Y</span></b><div>DOUBLE Y<small>PAYROLL WORKSPACE</small></div></a><div class="branch"><b>Y</b><div>더블와이짐 언주역점<small>공용 운영 워크스페이스</small></div></div><div class="nav-label">WORKSPACE</div><nav>' +
+    '<button class="nav-backdrop" id="nav-backdrop" aria-label="메뉴 닫기"></button><aside class="sidebar" aria-label="전체 메뉴"><a class="brand" href="#" data-view="dashboard">' +
+    logo() +
+    '<div>DOUBLE Y<small>더블와이짐 · 언주역점</small></div></a><div class="branch"><b>Y</b><div>더블와이짐 언주역점<small>공용 운영 워크스페이스</small></div></div><div class="nav-label">WORKSPACE</div><nav>' +
     nav
       .map(
         (v) =>
@@ -351,7 +647,7 @@ function render() {
           '" class="' +
           (v === view ? 'active' : '') +
           '"><span>' +
-          symbols[v] +
+          icon(v) +
           '</span>' +
           titles[v] +
           '</button>',
@@ -363,7 +659,13 @@ function render() {
     esc(user.name) +
     '<small>' +
     (isAdmin() ? '관리자 · 전체 조회' : '직원 · 본인만 조회') +
-    '</small></div></div></div></aside><main><header><span>워크스페이스 <i>/</i> ' +
+    '</small></div></div></div></aside><main class="view-' +
+    view +
+    '"><header><button class="menu-toggle" id="menu-toggle" aria-label="전체 메뉴 열기" aria-expanded="false">☰</button><a class="mobile-brand" href="#" data-view="' +
+    (allowed('dashboard') ? 'dashboard' : 'payroll') +
+    '">' +
+    logo() +
+    '<span>DOUBLE Y<small>언주역점</small></span></a><span class="breadcrumb">워크스페이스 <i>/</i> ' +
     titles[view] +
     '</span><div><button class="text-button" data-install hidden>앱 설치</button><button class="text-button" id="refresh">새로고침</button><button class="text-button" id="logout">로그아웃</button><span class="avatar light">' +
     esc(user.name.slice(0, 1)) +
@@ -377,17 +679,30 @@ function render() {
     month +
     '" aria-label="정산 월"></div>' +
     content() +
-    '<footer><b>DOUBLE Y <small>PAYROLL</small></b><span>서버 저장 · 변경 이력 보관 · 직원별 권한 적용</span></footer></div></main>';
+    '<footer><b>DOUBLE Y <small>PAYROLL</small></b><span>기록은 안전하게 · 정산은 정확하게</span></footer></div></main>' +
+    mobileNavigation();
   document.querySelectorAll('[data-view]').forEach(
     (b) =>
       (b.onclick = (e) => {
         e.preventDefault();
         const v = b.dataset.view;
         if (!allowed(v)) return;
+        document.body.classList.remove('menu-open');
         view = v;
+        window.scrollTo(0, 0);
         load();
       }),
   );
+  $('.sidebar').inert =
+    matchMedia('(max-width:760px)').matches && !document.body.classList.contains('menu-open');
+  const toggleMenu = () => {
+    const open = document.body.classList.toggle('menu-open');
+    $('.sidebar').inert = matchMedia('(max-width:760px)').matches && !open;
+    $('#menu-toggle').setAttribute('aria-expanded', String(open));
+  };
+  $('#menu-toggle').onclick = toggleMenu;
+  $('#nav-backdrop').onclick = toggleMenu;
+  if ($('#mobile-more')) $('#mobile-more').onclick = toggleMenu;
   $('#month').onchange = (e) => {
     if (e.target.value) {
       month = e.target.value;
@@ -409,7 +724,8 @@ function render() {
   if (view === 'password') passwordPage();
 }
 function content() {
-  if (view === 'dashboard' || view === 'payroll') return payrollContent();
+  if (view === 'dashboard') return dashboardContent();
+  if (view === 'payroll') return payrollContent();
   if (view === 'members') return membersContent();
   if (view === 'lessons') return lessonsContent();
   if (view === 'sales') return salesContent();
@@ -469,6 +785,7 @@ function payrollContent() {
     '</div><section class="panel"><div class="panel-head"><div><h3>' +
     (isAdmin() ? '구성원별 정산 현황' : '내 급여 현황') +
     '</h3><p>마감 시 계산 결과와 근거를 별도 버전으로 보관합니다.</p></div><button class="secondary" id="payroll-export">↓ CSV</button></div>' +
+    '<div class="payroll-table">' +
     table(
       [
         '구성원',
@@ -512,6 +829,34 @@ function payrollContent() {
           '">명세서 ↗</button></td></tr>',
       ),
     ) +
+    '</div><div class="payroll-mobile">' +
+    rows
+      .map(
+        (r) =>
+          '<article class="payroll-card"><div><b>' +
+          esc(r.name) +
+          '</b><span class="status-chip ' +
+          r.state +
+          '">' +
+          { draft: '작성 중', submitted: '제출 완료', approved: '승인 완료' }[r.state] +
+          '</span></div><dl><div><dt>진행 수업 / 지급률</dt><dd>' +
+          r.lessons +
+          '회 / ' +
+          r.rate +
+          '%</dd></div><div><dt>개인 등록·조정 매출</dt><dd>' +
+          money(r.revenue) +
+          '원</dd></div><div><dt>서명 확인 필요</dt><dd>' +
+          (r.currentUnconfirmed ?? r.unconfirmed) +
+          '건</dd></div></dl><div class="payroll-card-total"><span>실지급 ' +
+          (r.frozen ? '확정' : '예상') +
+          '</span><b>' +
+          money(r.net) +
+          '원</b></div><button class="secondary wide" data-payroll="' +
+          r.personId +
+          '">명세서 확인 · 제출</button></article>',
+      )
+      .join('') +
+    '</div>' +
     (!rows.length
       ? empty('정산할 구성원이 없습니다', '관리자가 구성원을 추가하고 급여 조건을 설정하세요.')
       : '') +
@@ -906,7 +1251,17 @@ async function completeForm(key) {
         .join(''),
     ) +
       field('수업일', 'date', 'date', today(), 'max="' + today() + '"') +
-      field('수업 시작 시간', 'time', 'time', '10:00') +
+      field(
+        '수업 시작 시간',
+        'time',
+        'time',
+        new Intl.DateTimeFormat('sv-SE', {
+          timeZone: 'Asia/Seoul',
+          hour: '2-digit',
+          minute: '2-digit',
+          hourCycle: 'h23',
+        }).format(new Date()),
+      ) +
       '<p class="form-note">수업을 저장한 뒤 회원 화면으로 전환합니다. 정확한 날짜·회차를 회원에게 확인받으세요. 미서명 기록도 예상 급여에 포함되지만 승인 전 검수가 필요합니다.</p>',
     async (f, key) => {
       const row = await api('/lessons', {
@@ -972,7 +1327,7 @@ function drawEvidence(canvas, strokes) {
   const c = canvas.getContext('2d');
   c.lineWidth = 3;
   c.lineCap = 'round';
-  c.strokeStyle = '#5f427d';
+  c.strokeStyle = '#20242a';
   for (const line of strokes) {
     c.beginPath();
     line.forEach(([x, y], i) =>
@@ -1601,6 +1956,11 @@ function bindPage() {
       },
     );
   });
+  on('#quick-record', quickRecordForm);
+  on('#dashboard-reconcile', async () => {
+    view = 'source';
+    await load();
+  });
   on('#new-registration', async () => registrationForm());
   on('#bulk-import', bulkImport);
   on('#member-search-button', async () =>
@@ -1753,6 +2113,7 @@ function bindPage() {
     );
 }
 async function showMember(r) {
+  document.body.classList.remove('menu-open');
   memberState = r;
   $('#modal').close();
   $('#app').hidden = true;
@@ -1764,7 +2125,9 @@ async function showMember(r) {
     active = null,
     key = uid();
   host.innerHTML =
-    '<div class="member-sheet"><div class="member-brand">DOUBLE Y <small>언주역점 · 수업 확인</small></div><div class="member-intro">' +
+    '<div class="member-sheet"><div class="member-brand">' +
+    logo() +
+    '<div>DOUBLE Y GYM<small>언주역점 · 수업 확인</small></div></div><div class="member-intro">' +
     (record ? '✓ 서명 저장 완료' : '회원님, 수업 내용을 확인해주세요') +
     '</div><h1>' +
     esc(snap?.member || '수업 확인') +
@@ -1812,7 +2175,7 @@ async function showMember(r) {
     ctx.lineWidth = 2.5;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
-    ctx.strokeStyle = '#4c365f';
+    ctx.strokeStyle = '#20242a';
     for (const line of record?.strokes || strokes) {
       ctx.beginPath();
       line.forEach(([x, y], i) =>
@@ -1922,6 +2285,20 @@ window.addEventListener('beforeinstallprompt', (e) => {
 window.addEventListener('appinstalled', () => {
   installPrompt = null;
   bindInstall();
+});
+matchMedia('(max-width:760px)').addEventListener('change', () => {
+  document.body.classList.remove('menu-open');
+  const sidebar = $('.sidebar');
+  if (sidebar) sidebar.inert = matchMedia('(max-width:760px)').matches;
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && document.body.classList.contains('menu-open')) {
+    document.body.classList.remove('menu-open');
+    const sidebar = $('.sidebar');
+    if (sidebar) sidebar.inert = matchMedia('(max-width:760px)').matches;
+    $('#menu-toggle')?.setAttribute('aria-expanded', 'false');
+    $('#menu-toggle')?.focus();
+  }
 });
 window.addEventListener('offline', () => toast('오프라인입니다. 입력은 서버에 저장되지 않습니다.'));
 if ('serviceWorker' in navigator && isSecureContext)
