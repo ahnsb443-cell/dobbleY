@@ -1,0 +1,5 @@
+payroll.example.com {
+    encode zstd gzip
+    header Strict-Transport-Security "max-age=15552000"
+    reverse_proxy 127.0.0.1:3000
+}

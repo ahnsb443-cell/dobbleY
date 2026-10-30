@@ -1,0 +1,8 @@
+[Unit]
+Description=Daily payroll backup at 03:00 Korea time
+[Timer]
+OnCalendar=*-*-* 03:00:00 Asia/Seoul
+Persistent=true
+Unit=double-y-backup.service
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,15 @@
+[Unit]
+Description=Consistent Double Y payroll backup
+[Service]
+Type=oneshot
+User=doubley
+Group=doubley
+WorkingDirectory=/opt/double-y
+EnvironmentFile=/etc/double-y.env
+Environment=BACKUP_DIR=/var/backups/double-y
+ExecStart=/usr/bin/node /opt/double-y/scripts/backup.mjs
+UMask=0077
+NoNewPrivileges=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/double-y /var/backups/double-y
