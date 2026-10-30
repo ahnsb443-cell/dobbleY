@@ -6,10 +6,17 @@ import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { createApp } from '../server.mjs';
+import { createFirebaseApp } from '../firebase/local.mjs';
+const firebaseMode = process.argv.includes('--firebase');
 const reportMode = process.argv.includes('--report'),
   out = path.resolve(process.env.REPORT_DIR || 'reports/long-term-simulation'),
   dir = await mkdtemp(path.join(tmpdir(), 'dy-browser-')),
-  app = await createApp({ dataDir: dir });
+  app = process.argv.includes('--firebase')
+    ? await createFirebaseApp({
+        projectId: 'demo-double-y',
+        setupToken: 'browser-test-setup',
+      })
+    : await createApp({ dataDir: dir });
 await new Promise((r) => app.server.listen(0, '127.0.0.1', r));
 const url = 'http://127.0.0.1:' + app.server.address().port;
 let browser;
@@ -154,6 +161,8 @@ try {
   const admin = await browser.newPage({ viewport: { width: 1440, height: 1000 }, locale: 'ko-KR' });
   admin.on('pageerror', (e) => errors.push(e.message));
   await admin.goto(url);
+  if (process.argv.includes('--firebase'))
+    await admin.locator('[name=setupToken]').fill('browser-test-setup');
   await admin.locator('[name=name]').fill('가상 관리자');
   await admin.locator('[name=username]').fill('demo.admin');
   await admin.locator('[name=password]').fill(adminPw);
@@ -414,7 +423,9 @@ try {
             '"></section>',
         )
         .join('') +
-      '<section><h2>운영 범위</h2><p>여러 PC와 폰이 하나의 Node 서버와 영속 SQLite DB에 접속합니다. 회원·계약·수업·서명·정산은 개별 테이블이며 전체 JSON 4MB 누적 제한을 없앴습니다. 자동 Firebase 연결이나 외부 배포는 수행하지 않았습니다.</p><p>원본 서명은 손글씨 수업 확인 기록입니다. 회원 휴대폰 본인 인증·공인 인증서 전자서명은 아닙니다. 실사용 전 HTTPS·백업·복구·보관 정책·운영 서버 연결을 구성해야 합니다.</p></section></main></body></html>';
+      (firebaseMode
+        ? '<section><h2>Firebase 검증 범위</h2><p>Firebase Authentication·Firestore 에뮬레이터에 실제로 저장하고 화면을 조작했습니다. 실제 운영 프로젝트 배포 자료는 아닙니다. 계정·회원·계약·수업·서명·정산은 개별 문서입니다. 실사용 전 실제 프로젝트·HTTPS 배포·관리형 예약 백업과 현장 기기 검증이 필요합니다.</p><p>손글씨는 수업 확인 기록이며 회원 휴대폰 본인 인증은 포함하지 않습니다.</p></section></main></body></html>'
+        : '<section><h2>운영 범위</h2><p>SQLite 로컬 서버 검증 자료입니다. 외부 배포는 수행하지 않았습니다.</p></section></main></body></html>');
     await writeFile(path.join(out, '장기운영_실제화면_시뮬레이션.html'), html);
     const report = await browser.newPage();
     await report.setContent(html, { waitUntil: 'load' });
@@ -429,6 +440,7 @@ try {
       path.join(out, 'verified.json'),
       JSON.stringify(
         {
+          storage: firebaseMode ? 'firestore-emulator' : 'sqlite',
           members: 11,
           contracts: 12,
           lessons: 3,

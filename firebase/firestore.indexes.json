@@ -1,0 +1,288 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "salary_terms",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "person_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "effective_month",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "rules",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "profile",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "effective_month",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "lessons",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "contract_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "date",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "time",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "id",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "members",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "active",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "name",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "id",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "members",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "active",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "person_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "name",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "id",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "contracts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "member_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "active",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "accounts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "role",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "active",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "periods",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "state",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "month",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "payroll_runs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "person_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "month",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "payroll_versions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "person_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "month",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "member_assignments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "member_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "person_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "effective_date",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "signatures",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "lesson_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "signed_at",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "sales",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "month",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "person_id",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "lessons",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "month",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "person_id",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "source_records",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "month",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "person_id",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "payroll_runs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "month",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "person_id",
+          "order": "ASCENDING"
+        }
+      ]
+    }
+  ],
+  "fieldOverrides": [
+    {
+      "collectionGroup": "signature_payloads",
+      "fieldPath": "strokes",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "signatures",
+      "fieldPath": "snapshot",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "payroll_versions",
+      "fieldPath": "body",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "rules",
+      "fieldPath": "body",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "idempotency",
+      "fieldPath": "response",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "audit",
+      "fieldPath": "details",
+      "indexes": []
+    }
+  ]
+}

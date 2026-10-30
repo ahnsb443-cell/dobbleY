@@ -1,0 +1,7 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Signatures currently live in separate bounded Firestore documents, not public object URLs.
+    match /{allPaths=**} { allow read, write: if false; }
+  }
+}

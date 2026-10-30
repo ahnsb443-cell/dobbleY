@@ -1,0 +1,98 @@
+{
+  "functions": [
+    {
+      "source": ".",
+      "codebase": "payroll",
+      "runtime": "nodejs22",
+      "ignore": [
+        "node_modules",
+        ".git",
+        ".data",
+        "backups",
+        "reports",
+        "test",
+        "exports",
+        "deploy",
+        "*.log",
+        ".env",
+        ".env.*",
+        "*.sqlite*",
+        "*.bundle",
+        "*.zip",
+        "firebase-debug.log",
+        "firestore-debug.log",
+        "ui-debug.log",
+        ".secret.local",
+        "service-account*.json",
+        "*.jsonl",
+        "*.sha256"
+      ]
+    }
+  ],
+  "hosting": {
+    "public": "public",
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "rewrites": [
+      {
+        "source": "/api/**",
+        "function": {
+          "functionId": "api",
+          "region": "asia-northeast3",
+          "pinTag": true
+        }
+      }
+    ],
+    "headers": [
+      {
+        "source": "**",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-store"
+          },
+          {
+            "key": "X-Content-Type-Options",
+            "value": "nosniff"
+          },
+          {
+            "key": "Referrer-Policy",
+            "value": "same-origin"
+          },
+          {
+            "key": "X-Frame-Options",
+            "value": "DENY"
+          },
+          {
+            "key": "Content-Security-Policy",
+            "value": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+          },
+          {
+            "key": "Strict-Transport-Security",
+            "value": "max-age=15552000"
+          }
+        ]
+      }
+    ]
+  },
+  "firestore": {
+    "rules": "firebase/firestore.rules",
+    "indexes": "firebase/firestore.indexes.json"
+  },
+  "storage": {
+    "rules": "firebase/storage.rules"
+  },
+  "emulators": {
+    "auth": {
+      "host": "127.0.0.1",
+      "port": 9099
+    },
+    "firestore": {
+      "host": "127.0.0.1",
+      "port": 8080
+    },
+    "ui": {
+      "enabled": false
+    },
+    "singleProjectMode": true
+  }
+}

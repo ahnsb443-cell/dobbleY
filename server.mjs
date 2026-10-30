@@ -7,6 +7,7 @@ import { createApi } from './lib/api.mjs';
 import { headers } from './lib/security.mjs';
 const root = fileURLToPath(new URL('.', import.meta.url));
 export async function createApp({
+  apiHandler = null,
   dataDir = process.env.DATA_DIR || path.join(root, '.data'),
   secureCookies = process.env.NODE_ENV === 'production',
   publicOrigin = process.env.PUBLIC_ORIGIN || '',
@@ -18,8 +19,9 @@ export async function createApp({
     (!publicOrigin.startsWith('https://') || !secureCookies)
   )
     throw Error('Production requires HTTPS PUBLIC_ORIGIN and secure cookies.');
-  const store = await openDatabase(dataDir),
-    api = createApi(store, { secureCookies, publicOrigin, setupToken, allowLocalSetup });
+  const store = apiHandler ? null : await openDatabase(dataDir),
+    api =
+      apiHandler || createApi(store, { secureCookies, publicOrigin, setupToken, allowLocalSetup });
   const files = {
     '/': 'public/index.html',
     '/index.html': 'public/index.html',
@@ -62,7 +64,7 @@ export async function createApp({
   });
   server.requestTimeout = 30000;
   server.headersTimeout = 15000;
-  server.on('close', () => store.close());
+  server.on('close', () => store?.close());
   return { server, store };
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

@@ -5,3 +5,14 @@ reports/
 .env
 *.sqlite*
 *.log
+.firebase/
+*-debug.log
+firebase/*.local
+service-account*.json
+*.jsonl
+*.sha256
+
+.env.*
+!.env.example
+
+.secret.local

@@ -1,13 +1,13 @@
 {
   "name": "double-y-payroll",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=24.0.0"
+    "node": ">=22.13.0"
   },
   "scripts": {
-    "start": "node --env-file-if-exists=.env server.mjs",
+    "start": "node --env-file-if-exists=.env.app.local firebase/local.mjs",
     "dev": "node --env-file-if-exists=.env server.mjs",
     "test": "node --test --test-isolation=none test/*.test.mjs",
     "check": "node scripts/check.mjs",
@@ -15,10 +15,24 @@
     "simulate": "node scripts/browser.mjs --report",
     "backup": "node scripts/backup.mjs",
     "restore": "node scripts/restore.mjs",
-    "archive": "node scripts/archive.mjs"
+    "archive": "node scripts/archive.mjs",
+    "start:firebase": "node --env-file-if-exists=.env.app.local firebase/local.mjs",
+    "emulators": "firebase emulators:start --only auth,firestore --project demo-double-y",
+    "test:firebase": "firebase emulators:exec --only auth,firestore --project demo-double-y \"node --test --test-isolation=none test/firebase.test.mjs\"",
+    "test:firebase:browser": "firebase emulators:exec --only auth,firestore --project demo-double-y \"node scripts/browser.mjs --firebase\"",
+    "deploy:firebase": "firebase deploy --only functions:payroll,hosting,firestore:rules,firestore:indexes",
+    "firebase:export": "node scripts/firebase-export.mjs",
+    "firebase:restore": "node scripts/firebase-restore.mjs",
+    "start:sqlite": "node --env-file-if-exists=.env server.mjs"
   },
   "devDependencies": {
+    "firebase-tools": "^15.34.2",
     "playwright": "^1.64.1",
     "prettier": "^3.9.10"
-  }
+  },
+  "dependencies": {
+    "firebase-admin": "^14.5.0",
+    "firebase-functions": "^7.4.0"
+  },
+  "main": "firebase/index.mjs"
 }
