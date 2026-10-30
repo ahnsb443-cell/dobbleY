@@ -19,7 +19,7 @@
    프로젝트/결제 생성은 이 작업에서 수행하지 않았습니다.
 3. Firestore Native 데이터베이스를 만들고 위치를 선택합니다.
 4. Authentication → Sign-in method에서 Email/Password를 켭니다.
-   Password policy는 코드의 10~128자 제한과 맞추고 프로젝트의 가입/로그인 API 쿼터를 확인합니다.
+   Password policy는 코드의 6~128자 제한과 맞추고 프로젝트의 가입/로그인 API 쿼터를 확인합니다.
 5. Firebase 프로젝트 웹 앱 설정의 Web API key를 확인합니다. 이는 공개 설정 키이며 서비스 계정 비밀키와 다릅니다.
 6. 개발 PC에서 Firebase CLI에 본인 계정으로 인증합니다. 이 환경은 자동 로그인/계정 선택을 하지 않았습니다.
 7. .firebaserc의 기본 demo-double-y를 실제 프로젝트로 바꾸거나 명령마다 --project 실제ID를 명시합니다.
