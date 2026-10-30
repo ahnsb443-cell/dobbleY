@@ -1,10 +1,23 @@
-import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { Store, atomic } from './store.mjs';
+import { randomBytes, createHmac } from 'node:crypto';
+import { Store, atomic, services } from './store.mjs';
 import { fail, digest, today } from '../lib/utils.mjs';
 import { password, username, accountView } from '../lib/security.mjs';
 import { person } from './domain.mjs';
 export { username, password, accountView };
 export const token = () => randomBytes(32).toString('hex');
+export function preparePassword(value) {
+  password(value);
+  const pinKey = /^[0-9]{4}$/.test(value) ? token() : null;
+  return { pinKey, authPassword: pinKey ? pinPassword(pinKey, value) : value };
+}
+function pinPassword(key, value) {
+  return (
+    'Dy!7' +
+    createHmac('sha256', key)
+      .update('double-y-pin-v1:' + value)
+      .digest('hex')
+  );
+}
 export const emailFor = (name) => digest(username(name)) + '@accounts.double-y.invalid';
 export function authEndpoint(projectId) {
   const emulator = process.env.FIREBASE_AUTH_EMULATOR_HOST;
@@ -16,6 +29,14 @@ export function authEndpoint(projectId) {
 }
 export async function signIn(projectId, name, pass) {
   if (typeof pass !== 'string' || pass.length > 128) fail(401, '아이디 또는 비밀번호가 다릅니다.');
+  if (/^[0-9]{4}$/.test(pass)) {
+    const account = await new Store(services(projectId).db).get(
+      'accounts',
+      digest('account:' + username(name)),
+    );
+    if (!account?.pin_key) fail(401, '아이디 또는 비밀번호가 다릅니다.');
+    pass = pinPassword(account.pin_key, pass);
+  }
   const key =
     process.env.WEB_API_KEY ||
     process.env.FIREBASE_WEB_API_KEY ||
@@ -163,17 +184,18 @@ export async function freshActor(s, a) {
 export async function provision(svc, b, save) {
   const name = username(b.username);
   password(b.password);
-  const uid = digest('account:' + name);
+  const uid = digest('account:' + name),
+    prepared = preparePassword(b.password);
   let created = false;
   try {
     await svc.auth.createUser({
       uid,
       email: emailFor(name),
-      password: b.password,
+      password: prepared.authPassword,
       displayName: b.name || name,
     });
     created = true;
-    return await save(uid, name);
+    return await save(uid, name, prepared.pinKey);
   } catch (e) {
     if (created) {
       // Profile commit succeeded but later response/session failed: never delete a committed user.

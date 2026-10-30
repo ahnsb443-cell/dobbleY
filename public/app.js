@@ -505,16 +505,22 @@ function loginPage() {
       'autocomplete="username" minlength="3" maxlength="40"',
     ) +
     field(
-      '비밀번호',
+      '비밀번호 (숫자 4자리 또는 6자 이상)',
       'password',
       'password',
       '',
       'autocomplete="' +
         (first ? 'new-password' : 'current-password') +
-        '" minlength="6" maxlength="128"',
+        '" minlength="4" pattern="([0-9]{4}|.{6,128})" maxlength="128"',
     ) +
     (first
-      ? field('비밀번호 확인', 'confirm', 'password', '', 'minlength="6" maxlength="128"')
+      ? field(
+          '비밀번호 확인',
+          'confirm',
+          'password',
+          '',
+          'minlength="4" pattern="([0-9]{4}|.{6,128})" maxlength="128"',
+        )
       : '') +
     (first && setupRemote ? field('최초 설정 코드', 'setupToken', 'password') : '') +
     '<div class="form-error"></div><button class="primary wide" type="submit">' +
@@ -556,14 +562,14 @@ function passwordBody() {
       'password',
       'password',
       '',
-      'autocomplete="new-password" minlength="6" maxlength="128"',
+      'autocomplete="new-password" minlength="4" pattern="([0-9]{4}|.{6,128})" maxlength="128"',
     ) +
     field(
       '새 비밀번호 확인',
       'confirm',
       'password',
       '',
-      'autocomplete="new-password" minlength="6" maxlength="128"',
+      'autocomplete="new-password" minlength="4" pattern="([0-9]{4}|.{6,128})" maxlength="128"',
     ) +
     '<div class="form-error"></div><button class="primary" type="submit">비밀번호 변경</button>'
   );
@@ -1493,9 +1499,9 @@ function newAccountForm() {
         'password',
         'password',
         '',
-        'minlength="6" maxlength="128" autocomplete="new-password"',
+        'minlength="4" pattern="([0-9]{4}|.{6,128})" maxlength="128" autocomplete="new-password"',
       ) +
-      '<p class="form-note">직원이 처음 접속하면 새 비밀번호를 설정해야 합니다. 임시 비밀번호는 직원에게 개별 전달하세요.</p>',
+      '<p class="form-note">숫자 4자리 또는 6자 이상으로 설정하세요. 직원이 처음 접속하면 새 비밀번호를 설정해야 합니다. 임시 비밀번호는 직원에게 개별 전달하세요.</p>',
     async (f, k) => {
       await api('/accounts', { method: 'POST', key: k, body: Object.fromEntries(f) });
       await load();
@@ -1520,7 +1526,7 @@ function editAccount(key) {
         'password',
         'password',
         '',
-        'minlength="6" maxlength="128" autocomplete="new-password"',
+        'minlength="4" pattern="([0-9]{4}|.{6,128})" maxlength="128" autocomplete="new-password"',
       ) +
       field('변경 사유', 'reason') +
       '<p class="form-note">중지·초기화하면 현재 로그인도 종료합니다. 기존 비밀번호 원문은 조회하지 않습니다.</p>',

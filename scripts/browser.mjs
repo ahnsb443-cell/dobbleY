@@ -21,9 +21,9 @@ await new Promise((r) => app.server.listen(0, '127.0.0.1', r));
 const url = 'http://127.0.0.1:' + app.server.address().port;
 let browser;
 const pw = () => randomBytes(20).toString('hex'),
-  adminPw = pw(),
-  temp = pw(),
-  teacherPw = pw(),
+  adminPw = process.argv.includes('--pin') ? '0518' : pw(),
+  temp = process.argv.includes('--pin') ? '0427' : pw(),
+  teacherPw = process.argv.includes('--pin') ? '0836' : pw(),
   steps = [],
   errors = [];
 if (reportMode) await mkdir(out, { recursive: true });

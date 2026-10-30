@@ -364,12 +364,13 @@ export function createFirebaseApi(
           fail(403, '최초 관리자 설정 코드가 필요합니다.');
         if (await new Store(svc.db).get('control', 'bootstrap')) fail(409, '이미 설정되었습니다.');
         const display = text(b.name, '관리자 이름');
-        await auth.provision(svc, b, async (uid, name) =>
+        await auth.provision(svc, b, async (uid, name, pinKey) =>
           atomic(svc.db, async (s) => {
             if (await s.get('control', 'bootstrap')) fail(409, '이미 설정되었습니다.');
             const a = {
               id: uid,
               username: name,
+              pin_key: pinKey,
               role: 'admin',
               person_id: null,
               display_name: display,
@@ -412,7 +413,7 @@ export function createFirebaseApi(
       auth.checkSession(a, path, method);
       if (changing && req.headers['x-csrf-token'] !== a.csrf) fail(403, '세션을 새로고침하세요.');
       if (path === '/api/password' && method === 'POST') {
-        auth.password(b.password);
+        const prepared = auth.preparePassword(b.password);
         if (b.password === b.currentPassword) fail(400, '다른 새 비밀번호를 사용하세요.');
         await auth.throttle(svc.db, 'password:' + a.id);
         await auth.signIn(svc.projectId, a.username, b.currentPassword);
@@ -423,11 +424,12 @@ export function createFirebaseApi(
           await s.put('accounts', a.id, {
             ...(await d.required(s, 'accounts', a.id)),
             must_change: 1,
+            pin_key: prepared.pinKey,
             version: actor.version + 1,
           });
           await s.audit(actor, 'password-change', 'account', a.id);
         });
-        await svc.auth.updateUser(a.id, { password: b.password });
+        await svc.auth.updateUser(a.id, { password: prepared.authPassword });
         await svc.auth.revokeRefreshTokens(a.id);
         await atomic(svc.db, async (s) => {
           const account = await d.required(s, 'accounts', a.id);
@@ -452,7 +454,7 @@ export function createFirebaseApi(
       if (path === '/api/accounts' && method === 'POST') {
         d.admin(a);
         if (!['admin', 'employee'].includes(b.role)) fail(400, '권한을 확인하세요.');
-        const value = await auth.provision(svc, b, async (uid, name) =>
+        const value = await auth.provision(svc, b, async (uid, name, pinKey) =>
           atomic(svc.db, async (s) => {
             const actor = await auth.freshActor(s, a);
             auth.checkSession(actor, path, method);
@@ -463,6 +465,7 @@ export function createFirebaseApi(
             const account = {
               id: uid,
               username: name,
+              pin_key: pinKey,
               role: b.role,
               person_id: p?.id || null,
               display_name: p?.name || text(b.name, '이름'),
@@ -481,7 +484,7 @@ export function createFirebaseApi(
         d.admin(a);
         const uid = path.split('/')[3];
         if (uid === a.id) fail(400, '본인 계정은 비밀번호 메뉴에서 변경하세요.');
-        if (b.password !== undefined) auth.password(b.password);
+        const prepared = b.password !== undefined ? auth.preparePassword(b.password) : null;
         await atomic(svc.db, async (s) => {
           const actor = await auth.freshActor(s, a);
           auth.checkSession(actor, path, method);
@@ -507,6 +510,7 @@ export function createFirebaseApi(
             ...old,
             active: b.password !== undefined ? 0 : active,
             pending_active: active,
+            pin_key: prepared ? prepared.pinKey : old.pin_key || null,
             must_change: b.password !== undefined ? 1 : old.must_change,
             version: old.version + 1,
           });
@@ -516,7 +520,7 @@ export function createFirebaseApi(
           });
         });
         if (b.password !== undefined) {
-          await svc.auth.updateUser(uid, { password: b.password });
+          await svc.auth.updateUser(uid, { password: prepared.authPassword });
           await svc.auth.revokeRefreshTokens(uid);
           await atomic(svc.db, async (s) => {
             const r = await d.required(s, 'accounts', uid);

@@ -105,3 +105,5 @@ Auth 비밀번호는 이 내보내기에 포함하지 않습니다. 별도 Auth 
 
 이전 SQLite 구현은 회귀 검증/이관 참고용으로 남겼습니다. npm run start:sqlite로 별도 실행하며
 Firebase와 자동 양방향 동기화하지 않습니다. [README-SQLITE.md](README-SQLITE.md)는 이전 저장 방식 문서입니다.
+
+비밀번호는 숫자 4자리 PIN 또는 6~128자를 지원합니다. PIN 원문 대신 서버에서 계정별 인증값을 만들어 Firebase Authentication으로 검증합니다. 기존 계정은 그대로 사용할 수 있습니다.

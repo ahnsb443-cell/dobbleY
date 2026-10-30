@@ -637,6 +637,194 @@ test(
           }
         },
       );
+      await t.test(
+        '숫자 4자리 PIN: 앞자리 0·변경·회원 모드 복귀·관리자 초기화·기존 로그인 호환',
+        async () => {
+          const pinPerson = (
+            await ok('/people', {
+              method: 'POST',
+              auth: owner,
+              body: { name: 'PIN 선생님', profile: 'morning', hireMonth: '2026-01' },
+            })
+          ).body;
+          const issued = (
+            await ok('/accounts', {
+              method: 'POST',
+              auth: owner,
+              body: {
+                username: 'pin.teacher',
+                password: '0427',
+                role: 'employee',
+                personId: pinPerson.id,
+              },
+            })
+          ).body;
+          assert.equal(JSON.stringify(issued).includes('pin_key'), false);
+          let session = (
+            await ok('/login', {
+              method: 'POST',
+              body: { username: 'pin.teacher', password: '0427' },
+            })
+          ).auth;
+          const original = session;
+          session = (
+            await ok('/password', {
+              method: 'POST',
+              auth: session,
+              body: { currentPassword: '0427', password: '0836' },
+            })
+          ).auth;
+          assert.equal((await req('/me', { auth: original })).status, 401);
+          assert.equal(
+            (
+              await req('/login', {
+                method: 'POST',
+                body: { username: 'pin.teacher', password: '0427' },
+              })
+            ).status,
+            401,
+          );
+          assert.equal(
+            (
+              await req('/password', {
+                method: 'POST',
+                auth: session,
+                body: { currentPassword: '0836', password: 'abc4' },
+              })
+            ).status,
+            400,
+          );
+          assert.equal(
+            (
+              await req('/password', {
+                method: 'POST',
+                auth: session,
+                body: { currentPassword: '0836', password: '12345' },
+              })
+            ).status,
+            400,
+          );
+          const stored = await new Store(svc.db).get('accounts', issued.id);
+          assert.match(stored.pin_key, /^[a-f0-9]{64}$/);
+          assert.equal(
+            JSON.stringify((await ok('/me', { auth: session })).body).includes('pin_key'),
+            false,
+          );
+          const registration = (
+            await ok('/registrations', {
+              method: 'POST',
+              auth: session,
+              body: {
+                name: 'PIN 회원',
+                paidDate: '2026-10-01',
+                startDate: '2026-10-01',
+                category: 'pt',
+                saleType: 'new',
+                amount: 1000000,
+                quantity: 10,
+              },
+            })
+          ).body;
+          const lesson = (
+            await ok('/lessons', {
+              method: 'POST',
+              auth: session,
+              body: { contractId: registration.contract.id, date: '2026-10-22', time: '11:00' },
+            })
+          ).body;
+          await ok('/member-mode', {
+            method: 'POST',
+            auth: session,
+            body: { lessonId: lesson.id },
+          });
+          assert.equal((await req('/members', { auth: session })).status, 403);
+          assert.equal(
+            (
+              await req('/member-mode/exit', {
+                method: 'POST',
+                auth: session,
+                body: { password: '0000' },
+              })
+            ).status,
+            401,
+          );
+          await ok('/member-mode/exit', {
+            method: 'POST',
+            auth: session,
+            body: { password: '0836' },
+          });
+          let account = (await ok('/accounts', { auth: owner })).body.items.find(
+            (x) => x.id === issued.id,
+          );
+          assert.equal(JSON.stringify(account).includes('pin_key'), false);
+          await ok('/accounts/' + issued.id, {
+            method: 'PATCH',
+            auth: owner,
+            body: { version: account.version, password: 'normal123', reason: '일반 비밀번호 전환' },
+          });
+          assert.equal((await req('/me', { auth: session })).status, 401);
+          assert.equal(
+            (
+              await req('/login', {
+                method: 'POST',
+                body: { username: 'pin.teacher', password: '0836' },
+              })
+            ).status,
+            401,
+          );
+          session = (
+            await ok('/login', {
+              method: 'POST',
+              body: { username: 'pin.teacher', password: 'normal123' },
+            })
+          ).auth;
+          session = (
+            await ok('/password', {
+              method: 'POST',
+              auth: session,
+              body: { currentPassword: 'normal123', password: '1938' },
+            })
+          ).auth;
+          account = (await ok('/accounts', { auth: owner })).body.items.find(
+            (x) => x.id === issued.id,
+          );
+          await ok('/accounts/' + issued.id, {
+            method: 'PATCH',
+            auth: owner,
+            body: { version: account.version, password: '0567', reason: 'PIN 초기화' },
+          });
+          assert.equal((await req('/me', { auth: session })).status, 401);
+          const reset = await ok('/login', {
+            method: 'POST',
+            body: { username: 'pin.teacher', password: '0567' },
+          });
+          assert.equal(reset.body.user.mustChange, true);
+          assert.equal(
+            (await ok('/login', { method: 'POST', body: { username: 'owner', password: pw } })).body
+              .user.role,
+            'admin',
+          );
+          for (let i = 0; i < 10; i++)
+            assert.equal(
+              (
+                await req('/login', {
+                  method: 'POST',
+                  body: { username: 'unknown.pin', password: '0000' },
+                })
+              ).status,
+              401,
+            );
+          assert.equal(
+            (
+              await req('/login', {
+                method: 'POST',
+                body: { username: 'unknown.pin', password: '0000' },
+              })
+            ).status,
+            429,
+          );
+        },
+      );
       await t.test('Firestore 보안 규칙으로 직접 데이터 접근 거부', async () => {
         const target =
           'http://' +
