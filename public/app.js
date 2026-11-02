@@ -1818,13 +1818,13 @@ async function memberContracts(key) {
       r.contracts.map(
         (c) =>
           '<tr><td>' +
-          c.start_date +
+          (c.migration_baseline ? '이관 기준 ' + c.carry_date : c.start_date) +
           '<small>결제 ' +
-          c.paid_date +
+          (c.paid_date || '원본 날짜 미제공') +
           '</small></td><td>' +
-          { new: '신규', renew: '추가 결제' }[c.sale_type] +
+          { new: '신규', renew: '추가 결제', migration: '기존 회원권 이관' }[c.sale_type] +
           '</td><td>' +
-          money(c.amount) +
+          (c.amount_unknown ? '결제금액 미제공' : money(c.amount)) +
           (extendedLessons
             ? '<small>' +
               (c.fixed_fee != null ? '고정 회당 ' + money(c.fixed_fee) + '원' : '월 지급률 적용') +

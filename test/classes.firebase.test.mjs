@@ -635,3 +635,97 @@ test(
     assert.equal((await read().get('contracts', fixed.id)).fixed_fee, 20000);
   },
 );
+
+test(
+  '기초잔여 이관은 과거 결제일·신규매출을 만들지 않고 회원권별 잔여·고정료·중복을 보존',
+  { skip: !enabled, timeout: 120000 },
+  async (t) => {
+    const { importBalances } = await import('../firebase/balances.mjs');
+    t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-02T09:00:00Z') });
+    const svc = services('demo-balance-' + randomBytes(4).toString('hex'));
+    const a = { id: 'admin', role: 'admin', display_name: '이관 검증' };
+    const run = (fn) => atomic(svc.db, fn),
+      read = () => new Store(svc.db);
+    const p = await run((s) =>
+      d.addPerson(s, a, { name: '검증 선생님', profile: 'standard', hireMonth: '2026-10' }),
+    );
+    const rows = [
+      {
+        row: 1,
+        name: '동일 회원',
+        instructor: p.name,
+        quantity: 30,
+        remaining: 14,
+        gross: 1980000,
+        category: 'pt',
+      },
+      {
+        row: 2,
+        name: '동일 회원',
+        instructor: p.name,
+        quantity: 20,
+        remaining: 20,
+        gross: 1045000,
+        category: 'pt',
+      },
+      {
+        row: 3,
+        name: '고정 회원',
+        instructor: p.name,
+        quantity: 36,
+        remaining: 16,
+        gross: null,
+        fixedFee: 20000,
+        category: 'pt',
+      },
+    ];
+    const input = { batch: 'test-baseline', asOf: '2026-11-02', rows };
+    assert.deepEqual(await run((s) => importBalances(s, a, input)), {
+      members: 2,
+      contracts: 3,
+      duplicates: 0,
+    });
+    assert.equal((await read().query('sales')).length, 0);
+    assert.equal((await read().query('members')).length, 2);
+    const contracts = await read().query('contracts');
+    const regular = contracts.find((c) => c.source_row === 1),
+      fixed = contracts.find((c) => c.source_row === 3);
+    assert.equal(regular.amount, 1800000);
+    assert.equal(regular.gross_amount, 1980000);
+    assert.equal(regular.paid_date, '');
+    assert.equal(regular.carry_used, 16);
+    assert.equal((await d.progress(read(), regular)).remaining, 14);
+    assert.equal((await d.progress(read(), fixed)).remaining, 16);
+    assert.deepEqual(await run((s) => importBalances(s, a, input)), {
+      members: 0,
+      contracts: 0,
+      duplicates: 3,
+    });
+    await assert.rejects(
+      run((s) => importBalances(s, a, { ...input, rows: [{ ...rows[0], remaining: 13 }] })),
+      /内容|내용/,
+    );
+    await assert.rejects(
+      run((s) => importBalances(s, { role: 'employee' }, input)),
+      /관리자/,
+    );
+    const l = await run((s) =>
+      d.addLesson(s, a, { contractId: fixed.id, date: '2026-11-02', time: '18:00' }),
+    );
+    assert.equal(
+      (await d.calculate(read(), p, '2026-11')).lines.find((x) => x.lessonId === l.id).unit,
+      20000,
+    );
+    assert.equal((await d.progress(read(), fixed)).remaining, 15);
+    await assert.rejects(
+      run((s) => d.addLesson(s, a, { contractId: regular.id, date: '2026-11-01', time: '18:00' })),
+      /날짜/,
+    );
+    await assert.rejects(
+      run((s) =>
+        importBalances(s, a, { ...input, batch: 'bad', rows: [{ ...rows[0], gross: null }] }),
+      ),
+      /금액/,
+    );
+  },
+);
