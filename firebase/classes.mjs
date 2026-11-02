@@ -69,6 +69,11 @@ async function groupGuard(s, a, pid, date) {
   return p;
 }
 const groupSlot = (r) => JSON.stringify([r.person_id, r.date, r.time]);
+export function groupPayment(hourlyRate, minutes, participants) {
+  const full = Math.round((hourlyRate * minutes) / 60);
+  const factor = participants === 0 ? 0.5 : 1;
+  return { full_amount: full, payment_factor: factor, amount: Math.round(full * factor) };
+}
 export async function addGroupLesson(s, a, b) {
   only(b, ['rateId', 'date', 'time', 'participants']);
   const rate = await owned(s, a, 'group_rates', b.rateId),
@@ -87,6 +92,7 @@ export async function addGroupLesson(s, a, b) {
     )[0];
   if (latest.id !== rate.id)
     fail(409, '적용 단가가 변경되었습니다. 해당 날짜의 최신 단가를 선택하세요.');
+  const participants = integer(b.participants ?? 0, '참여인원', 0, 500);
   const r = {
     id: id(),
     person_id: rate.person_id,
@@ -98,8 +104,8 @@ export async function addGroupLesson(s, a, b) {
     rate_version: rate.version,
     hourly_rate: rate.hourly_rate,
     billable_minutes: rate.billable_minutes,
-    participants: integer(b.participants ?? 0, '참여인원', 0, 500),
-    amount: Math.round((rate.hourly_rate * rate.billable_minutes) / 60),
+    participants,
+    ...groupPayment(rate.hourly_rate, rate.billable_minutes, participants),
     status: 'active',
     version: 1,
     reason: '',
@@ -136,7 +142,7 @@ export async function changeGroupLesson(s, a, key, b) {
     time,
     hourly_rate: rate,
     billable_minutes: mins,
-    amount: Math.round((rate * mins) / 60),
+    ...groupPayment(rate, mins, integer(b.participants ?? old.participants, '참여인원', 0, 500)),
     participants: integer(b.participants ?? old.participants, '참여인원', 0, 500),
     status: b.void ? 'void' : 'active',
     version: old.version + 1,

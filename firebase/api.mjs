@@ -24,6 +24,21 @@ export function createFirebaseApi(
   { secureCookies = true, publicOrigin = '', setupToken = '' } = {},
 ) {
   async function memberPayload(s, a) {
+    if (a.member_draft) {
+      // Validation and preview use a separate write buffer that is never flushed.
+      const preview = new Store(s.db, s.tx);
+      const l = await d.addLesson(preview, a, a.member_draft.input, {
+        lessonId: a.member_draft.lessonId,
+      });
+      return {
+        lessonId: l.id,
+        version: l.version,
+        snapshot: await d.snapshot(preview, l.id),
+        confirmation: { state: 'unsigned', signatureId: null, signedAt: null },
+        signature: null,
+        draft: true,
+      };
+    }
     if (!a.member_lesson_id) fail(409, '진행 중인 회원 확인 화면이 없습니다.');
     const l = await d.owned(s, a, 'lessons', a.member_lesson_id),
       confirmation = await d.confirmation(s, l);
@@ -56,17 +71,87 @@ export function createFirebaseApi(
     if (kind === 'member-mode') {
       const session = await d.required(s, 'auth_sessions', a.session_hash);
       if (path[2] === 'exit' && method === 'POST') {
-        await s.put('auth_sessions', a.session_hash, { ...session, member_lesson_id: null });
+        await s.put('auth_sessions', a.session_hash, {
+          ...session,
+          member_lesson_id: null,
+          member_draft: null,
+        });
         return { ok: true };
       }
-      if (path[2] === 'sign' && method === 'POST') return d.signLesson(s, a, a.member_lesson_id, b);
+      if (path[2] === 'sign' && method === 'POST') {
+        if (session.member_draft) {
+          const l = await d.addLesson(s, a, session.member_draft.input, {
+            lessonId: session.member_draft.lessonId,
+          });
+          const signed = await d.signLesson(s, a, l.id, b);
+          await s.put('auth_sessions', a.session_hash, {
+            ...session,
+            member_lesson_id: l.id,
+            member_draft: null,
+          });
+          return signed;
+        }
+        return d.signLesson(s, a, a.member_lesson_id, b);
+      }
+      if (method === 'POST' && !b.lessonId) {
+        const draft = {
+          lessonId: id(),
+          input: { contractId: b.contractId, date: b.date, time: b.time },
+        };
+        const payload = await memberPayload(s, {
+          ...a,
+          member_lesson_id: null,
+          member_draft: draft,
+        });
+        await s.put('auth_sessions', a.session_hash, {
+          ...session,
+          member_lesson_id: null,
+          member_draft: draft,
+        });
+        return payload;
+      }
       if (method === 'POST') {
         const l = await d.owned(s, a, 'lessons', b.lessonId);
         if (l.status !== 'active') fail(409, '취소된 수업입니다.');
-        await s.put('auth_sessions', a.session_hash, { ...session, member_lesson_id: l.id });
+        await s.put('auth_sessions', a.session_hash, {
+          ...session,
+          member_lesson_id: l.id,
+          member_draft: null,
+        });
         a = { ...a, member_lesson_id: l.id };
       }
       return memberPayload(s, a);
+    }
+    if (kind === 'overview' && method === 'GET') {
+      if (!a.read_only) d.admin(a);
+      // This internal reader is used solely to aggregate existing results; no mutation is exposed.
+      const reader = { ...a, role: 'admin' },
+        staff = [];
+      let lessons = 0,
+        unconfirmed = 0,
+        payrollTotal = 0;
+      for (const p of await d.eligible(s, m)) {
+        const r = await d.result(s, reader, p.id, m);
+        lessons += r.lessons + (r.groupLessons || 0);
+        unconfirmed += r.currentUnconfirmed ?? r.unconfirmed ?? 0;
+        payrollTotal += r.net;
+        staff.push({
+          name: r.name,
+          position: d.profiles[r.profile]?.name || r.profile,
+          lessons: r.lessons + (r.groupLessons || 0),
+          state: r.state,
+        });
+      }
+      const sales = await d.salesTotals(s, m);
+      return {
+        month: m,
+        centerRevenue: sales.centerNet,
+        membershipRevenue: sales.membership,
+        lessons,
+        unconfirmed,
+        payrollTotal,
+        staff,
+      };
     }
     if (kind === 'membership-total') {
       d.admin(a);
@@ -483,10 +568,6 @@ export function createFirebaseApi(
           ),
         );
       }
-      if (path === '/api/member-mode/exit' && method === 'POST') {
-        await auth.throttle(svc.db, 'unlock:' + a.id);
-        await auth.signIn(svc.projectId, a.username, b.password);
-      }
       if (path === '/api/accounts' && method === 'POST') {
         d.admin(a);
         if (!['admin', 'employee'].includes(b.role)) fail(400, '권한을 확인하세요.');
@@ -502,7 +583,7 @@ export function createFirebaseApi(
               id: uid,
               username: name,
               pin_key: pinKey,
-              role: b.role,
+              role: p?.profile === 'representative' ? 'employee' : b.role,
               person_id: p?.id || null,
               display_name: p?.name || text(b.name, '이름'),
               active: 1,

@@ -889,3 +889,147 @@ test(
     assert.equal((await read().query('audit', [['action', '==', 'lesson-delete']])).length, 2);
   },
 );
+
+test(
+  '대표 직책은 급여 대상에서 제외되고 수업·급여 입력을 생성하지 않음',
+  { skip: !enabled, timeout: 120000 },
+  async (t) => {
+    t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-02T09:00:00Z') });
+    const svc = services('demo-representative-' + randomBytes(4).toString('hex'));
+    const a = { id: 'admin', role: 'admin', display_name: '대표 검증' },
+      run = (fn) => atomic(svc.db, fn),
+      read = () => new Store(svc.db);
+    const p = await run((s) =>
+      d.addPerson(s, a, {
+        name: '대표 검증',
+        profile: 'representative',
+        hireMonth: '2026-11',
+        base: 1000000,
+        taxBps: 330,
+      }),
+    );
+    assert.equal(d.trainer(p), false);
+    assert.equal((await d.termsAt(read(), p.id, '2026-11')).base, 0);
+    assert.equal(
+      (await d.eligible(read(), '2026-11')).some((x) => x.id === p.id),
+      false,
+    );
+    await assert.rejects(d.calculate(read(), p, '2026-11'), /정산 대상/);
+    await assert.rejects(d.result(read(), a, p.id, '2026-11'), /정산 대상/);
+    await assert.rejects(
+      run((s) => d.addMember(s, a, { name: 'PT 회원', personId: p.id })),
+      /트레이너/,
+    );
+    await assert.rejects(
+      run((s) =>
+        w.settings(s, a, 'inputs', p.id, {
+          month: '2026-11',
+          version: 0,
+          extra: 1000000,
+          note: '추가 지급 시도',
+        }),
+      ),
+      /급여 입력/,
+    );
+    await run((s) =>
+      w.settings(s, a, 'terms', p.id, {
+        month: '2026-11',
+        profile: 'representative',
+        base: 1000000,
+        taxBps: 330,
+        version: 1,
+        reason: '대표 직책 유지',
+      }),
+    );
+    assert.equal((await d.termsAt(read(), p.id, '2026-11')).base, 0);
+    assert.equal((await d.termsAt(read(), p.id, '2026-11')).tax_bps, 0);
+  },
+);
+
+test(
+  '그룹수업 0명 하프 페이: 등록·정정·페이롤·원 단위 반올림',
+  { skip: !enabled, timeout: 120000 },
+  async (t) => {
+    t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-02T09:00:00Z') });
+    const svc = services('demo-half-' + randomBytes(4).toString('hex'));
+    const a = { id: 'admin', role: 'admin', display_name: '하프 페이 검증' },
+      run = (fn) => atomic(svc.db, fn),
+      read = () => new Store(svc.db);
+    const p = await run((s) =>
+      d.addPerson(s, a, { name: '그룹 검증', profile: 'group', hireMonth: '2026-11' }),
+    );
+    const user = { id: 'teacher', role: 'employee', person_id: p.id };
+    const rate = await run((s) =>
+      c.createGroupRate(s, a, p.id, {
+        name: '그룹',
+        effectiveDate: '2026-11-01',
+        hourlyRate: 35000,
+        billableMinutes: 60,
+        reason: '계약',
+      }),
+    );
+    const records = [];
+    for (const [i, participants] of [0, 1, 15].entries())
+      records.push(
+        await run((s) =>
+          c.addGroupLesson(s, user, {
+            rateId: rate.id,
+            date: '2026-11-01',
+            time: `${10 + i}:00`,
+            participants,
+          }),
+        ),
+      );
+    assert.deepEqual(
+      records.map((r) => r.amount),
+      [17500, 35000, 35000],
+    );
+    assert.deepEqual(
+      records.map((r) => r.payment_factor),
+      [0.5, 1, 1],
+    );
+    assert.equal((await d.calculate(read(), p, '2026-11')).groupCommission, 87500);
+    const full = await run((s) =>
+      c.changeGroupLesson(s, user, records[0].id, {
+        version: 1,
+        participants: 1,
+        reason: '인원 정정',
+      }),
+    );
+    assert.equal(full.amount, 35000);
+    const half = await run((s) =>
+      c.changeGroupLesson(s, user, records[0].id, {
+        version: 2,
+        participants: 0,
+        reason: '인원 최종 확인',
+      }),
+    );
+    assert.equal(half.amount, 17500);
+    assert.equal((await d.calculate(read(), p, '2026-11')).groupCommission, 87500);
+    assert.equal(c.groupPayment(35001, 60, 0).amount, 17501);
+    assert.equal(c.groupPayment(35000, 50, 0).amount, 14584);
+    await assert.rejects(
+      run((s) =>
+        c.addGroupLesson(s, user, {
+          rateId: rate.id,
+          date: '2026-11-01',
+          time: '14:00',
+          participants: 0,
+          amount: 35000,
+        }),
+      ),
+      (e) => e.status === 400,
+    );
+    await run((s) => s.put('periods', '2026-11', { state: 'closed' }));
+    await assert.rejects(
+      run((s) =>
+        c.changeGroupLesson(s, user, records[0].id, {
+          version: 3,
+          participants: 1,
+          reason: '마감 후',
+        }),
+      ),
+      /마감/,
+    );
+  },
+);

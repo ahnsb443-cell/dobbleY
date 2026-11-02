@@ -104,8 +104,10 @@ async function draw(page, context) {
 }
 async function returnTeacher(page) {
   await page.locator('#show-return').click();
-  await page.locator('#return-form [name=password]').fill(teacherPw);
-  await page.locator('#return-form button').click();
+  if (!firebaseMode) {
+    await page.locator('#return-form [name=password]').fill(teacherPw);
+    await page.locator('#return-form button').click();
+  } else assert.equal(await page.locator('#return-form').count(), 0);
   await page.waitForFunction(() => document.querySelector('#member-screen').hidden);
 }
 async function record(page, context, name, date, capture = false) {
@@ -165,7 +167,7 @@ async function record(page, context, name, date, capture = false) {
     await snap(
       page,
       '7. 서명 원본 저장 완료',
-      '회원·날짜·시간·회차·잔여횟수와 서명 원본 해시를 개별 저장합니다. 교사 비밀번호로 복귀하며, 서명 원본은 일반 API에서 변경·삭제하지 못합니다.',
+      '회원·날짜·시간·회차·잔여횟수와 서명 원본 해시를 개별 저장합니다. 홈으로 바로 복귀하며, 서명 원본은 일반 API에서 변경·삭제하지 못합니다.',
     );
   await returnTeacher(page);
 }
@@ -187,6 +189,57 @@ async function request(page, route, method = 'GET', body) {
     },
     { route, method, body },
   );
+}
+async function representativeScenario(admin, browser) {
+  await navigate(admin, 'people');
+  await admin.locator('#new-person').click();
+  await admin.locator('[name=name]').fill('대표 등록 검증');
+  await admin.locator('[name=profile]').selectOption('representative');
+  assert.equal(await admin.locator('[name=base]').isVisible(), false);
+  await admin.locator('[name=hireMonth]').fill('2026-11');
+  await clickSubmit(admin);
+  await closed(admin);
+  const person = (await request(admin, '/people')).body.items.find(
+    (p) => p.name === '대표 등록 검증',
+  );
+  assert.equal(person.profile, 'representative');
+  assert.equal(await admin.locator('[data-compensation="' + person.id + '"]').count(), 0);
+  const issued = await request(admin, '/accounts', 'POST', {
+    username: 'representative01',
+    password: '0261',
+    role: 'admin',
+    personId: person.id,
+  });
+  assert.equal(issued.status, 200);
+  assert.equal(issued.body.role, 'employee');
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, locale: 'ko-KR' });
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto(url);
+  await page.locator('[name=username]').fill('representative01');
+  await page.locator('[name=password]').fill('0261');
+  await page.locator('#login-form button').click();
+  await page.waitForSelector('#password-form');
+  await page.locator('[name=currentPassword]').fill('0261');
+  await page.locator('[name=password]').fill('0372');
+  await page.locator('[name=confirm]').fill('0372');
+  await page.locator('#password-form button').click();
+  await page.locator('.view-dashboard').waitFor();
+  assert.ok((await page.locator('.notice').innerText()).includes('현황 열람 전용'));
+  assert.equal(
+    await page
+      .locator('[data-view=payroll], #quick-record, #new-person, #membership-record')
+      .count(),
+    0,
+  );
+  assert.equal((await request(page, '/membership-total', 'PUT', {})).status, 403);
+  assert.equal((await request(page, '/overview?month=2026-11')).status, 200);
+  assert.equal(
+    await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1),
+    true,
+    'representative mobile fits viewport',
+  );
+  await page.close();
+  console.log('PASS: representative has overview only, no payroll or write controls.');
 }
 async function deleteLessonScenario(admin) {
   const p = (
@@ -395,6 +448,9 @@ async function extendedScenario(admin, browser) {
   await page.locator('[name=date]').fill(month + '-20');
   await page.locator('[name=date]').dispatchEvent('change');
   await page.locator('[name=time]').fill('18:00');
+  assert.match(await page.locator('#group-fee-preview').innerText(), /17,500.*50%/);
+  await page.locator('[name=participants]').fill('1');
+  assert.match(await page.locator('#group-fee-preview').innerText(), /35,000.*100%/);
   await page.locator('[name=participants]').fill('5');
   await clickSubmit(page);
   await closed(page);
@@ -432,8 +488,7 @@ async function extendedScenario(admin, browser) {
       document.querySelector('.member-intro')?.textContent.includes('저장 완료'),
     );
     await page.locator('#show-return').click();
-    await page.locator('#return-form [name=password]').fill('0839');
-    await page.locator('#return-form button').click();
+    assert.equal(await page.locator('#return-form').count(), 0);
     await page.waitForFunction(() => document.querySelector('#member-screen').hidden);
   }
   const pay = await checked(page, '/payroll/' + mixed.id + '?month=' + month);
@@ -652,6 +707,39 @@ try {
     '4. 잔여·정산 기준 유지',
     '다짐에서 제공된 추가 수업 기준도 같은 회원에 연결합니다. 선생님 화면에는 추가 결제 입력 동선이 없습니다.',
   );
+  if (firebaseMode) {
+    const beforeMember = (await request(teacher, '/members?q=' + encodeURIComponent('가상 회원01')))
+      .body.items[0];
+    const beforePay = (await request(teacher, '/payroll/' + pid + '?month=2026-10')).body;
+    for (const back of ['button', 'browser']) {
+      await navigate(teacher, 'members');
+      const card = teacher
+        .locator('.member-card')
+        .filter({ has: teacher.getByRole('heading', { name: '가상 회원01', exact: true }) });
+      await card.locator('[data-complete]').click();
+      await teacher.locator('[name=date]').fill('2026-10-07');
+      await teacher.locator('[name=time]').fill('10:00');
+      await clickSubmit(teacher);
+      await teacher.waitForSelector('#sign-pad');
+      assert.equal(await teacher.locator('#return-form').count(), 0);
+      const blocked = await request(teacher, '/lessons?month=2026-10');
+      assert.equal(blocked.status, 403);
+      if (back === 'button') await teacher.locator('#show-return').click();
+      else await teacher.goBack();
+      await teacher.waitForFunction(() => document.querySelector('#member-screen').hidden);
+      await teacher.locator('.view-dashboard').waitFor();
+      const afterMember = (
+        await request(teacher, '/members?q=' + encodeURIComponent('가상 회원01'))
+      ).body.items[0];
+      const afterPay = (await request(teacher, '/payroll/' + pid + '?month=2026-10')).body;
+      assert.equal(afterMember.remaining, beforeMember.remaining);
+      assert.equal(afterPay.commission, beforePay.commission);
+      assert.equal(afterPay.lessons, beforePay.lessons);
+    }
+    console.log(
+      'PASS: unsigned preview exit and browser Back leave lessons, balances and payroll unchanged, without password.',
+    );
+  }
   await record(teacher, context, '가상 회원01', '2026-10-07', true);
   await record(teacher, context, '가상 신규회원', '2026-10-08');
   await navigate(teacher, 'payroll');
@@ -892,6 +980,8 @@ try {
   if (firebaseMode && process.argv.includes('--delete-lesson')) await deleteLessonScenario(admin);
   if (firebaseMode && process.argv.includes('--fixed-fee')) await fixedFeeScenario(admin);
   if (firebaseMode && process.argv.includes('--classes')) await extendedScenario(admin, browser);
+  if (firebaseMode && process.argv.includes('--representative'))
+    await representativeScenario(admin, browser);
   assert.deepEqual(errors, []);
   console.log(
     'PASS: 10-member import, new/renewal, private mobile signing/server lock, late lesson, reconciliation, employee submit/admin approval/month close, frozen payout, audit, PWA cache policy.',

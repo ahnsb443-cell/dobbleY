@@ -48,16 +48,20 @@ const titles = {
   password: '내 비밀번호',
   sales: '센터 매출 · 환불',
 };
-const isAdmin = () => user?.role === 'admin',
+const isViewer = () => !!user?.readOnly;
+const isAdmin = () => user?.role === 'admin' && !isViewer(),
   isGroupOnly = () => user?.person?.profile === 'group',
   isTrainer = () =>
-    !!user?.person && !['fc', 'staff', 'part', 'daily', 'group'].includes(user.person.profile),
+    !!user?.person &&
+    !['fc', 'staff', 'part', 'daily', 'group', 'representative'].includes(user.person.profile),
   allowed = (v) =>
-    (v !== 'groups' || extendedLessons) &&
-    (isAdmin() ||
-      ['payroll', 'password'].includes(v) ||
-      (isGroupOnly() && v === 'groups') ||
-      (isTrainer() && ['dashboard', 'members', 'lessons', 'groups'].includes(v)));
+    isViewer()
+      ? ['dashboard', 'password'].includes(v)
+      : (v !== 'groups' || extendedLessons) &&
+        (isAdmin() ||
+          ['payroll', 'password'].includes(v) ||
+          (isGroupOnly() && v === 'groups') ||
+          (isTrainer() && ['dashboard', 'members', 'lessons', 'groups'].includes(v)));
 function toast(t) {
   $('#toast').textContent = t;
   $('#toast').classList.add('show');
@@ -96,30 +100,35 @@ function logo(className = '') {
   );
 }
 function mobileNavigation() {
-  const tabs = isAdmin()
+  const tabs = isViewer()
     ? [
-        ['dashboard', '홈'],
-        ['members', '회원'],
-        ['lessons', '수업'],
-        ['payroll', '정산'],
+        ['dashboard', '센터 현황'],
+        ['password', '비밀번호'],
       ]
-    : isGroupOnly() && extendedLessons
+    : isAdmin()
       ? [
-          ['groups', '그룹레슨'],
-          ['payroll', '페이롤'],
-          ['password', '비밀번호'],
+          ['dashboard', '홈'],
+          ['members', '회원'],
+          ['lessons', '수업'],
+          ['payroll', '정산'],
         ]
-      : isTrainer()
+      : isGroupOnly() && extendedLessons
         ? [
-            ['dashboard', '홈'],
-            ['members', '회원'],
-            ['lessons', '수업'],
-            ['payroll', '페이롤'],
-          ]
-        : [
+            ['groups', '그룹레슨'],
             ['payroll', '페이롤'],
             ['password', '비밀번호'],
-          ];
+          ]
+        : isTrainer()
+          ? [
+              ['dashboard', '홈'],
+              ['members', '회원'],
+              ['lessons', '수업'],
+              ['payroll', '페이롤'],
+            ]
+          : [
+              ['payroll', '페이롤'],
+              ['password', '비밀번호'],
+            ];
   return (
     '<nav class="mobile-nav" aria-label="주요 메뉴">' +
     tabs
@@ -282,7 +291,40 @@ function trainerPayrollContent() {
   );
 }
 
+function representativeOverviewContent() {
+  const staff = data.staff || [];
+  return (
+    '<div class="notice"><span>ⓘ</span><div><b>대표 · 센터 현황 열람 전용</b><p>대표는 급여 정산 대상에 포함되지 않습니다.</p></div></div><div class="stats">' +
+    [
+      ['센터 매출 · 공급가액', money(data.centerRevenue) + '원'],
+      ['직원 정산 합계', money(data.payrollTotal) + '원'],
+      ['진행 수업', (data.lessons || 0) + '회'],
+      ['서명 확인 필요', (data.unconfirmed || 0) + '건'],
+    ]
+      .map(([k, v]) => '<article><span>' + k + '</span><h2>' + v + '</h2></article>')
+      .join('') +
+    '</div><section class="panel"><div class="panel-head"><h3>직원별 운영 현황</h3></div>' +
+    table(
+      ['직원', '직책', '진행 수업', '정산 상태'],
+      staff.map(
+        (r) =>
+          '<tr><td>' +
+          esc(r.name) +
+          '</td><td>' +
+          esc(r.position) +
+          '</td><td>' +
+          r.lessons +
+          '회</td><td>' +
+          ({ draft: '작성 중', submitted: '제출 완료', approved: '승인 완료' }[r.state] ||
+            esc(r.state)) +
+          '</td></tr>',
+      ),
+    ) +
+    '</section>'
+  );
+}
 function dashboardContent() {
+  if (isViewer()) return representativeOverviewContent();
   if (!isAdmin()) return trainerHomeContent();
   const rows = data.items || [],
     own = rows.find((r) => r.personId === user.personId),
@@ -517,7 +559,7 @@ function groupContent() {
   const items = data.items || [],
     rates = data.rates?.items || [];
   return (
-    '<section class="panel"><div class="panel-head"><div><h3>그룹레슨 · 시간당 수업료</h3><p>참여인원과 관계없이 설정 단가 × 정산 인정시간으로 계산합니다.</p></div><div class="actions">' +
+    '<section class="panel"><div class="panel-head"><div><h3>그룹레슨 · 시간당 수업료</h3><p>설정 단가 × 정산 인정시간으로 계산하며, 참여인원 0명은 50%를 지급합니다.</p></div><div class="actions">' +
     (isAdmin() ? '<button class="secondary" id="new-group-rate">선생님별 단가 설정</button>' : '') +
     '<button class="primary" id="new-group-lesson">그룹레슨 기록</button></div></div>' +
     table(
@@ -539,7 +581,9 @@ function groupContent() {
           money(r.hourly_rate) +
           '원</td><td>' +
           money(r.amount) +
-          '원</td><td>' +
+          '원' +
+          (r.payment_factor === 0.5 ? '<small>0명 · 하프 페이 50%</small>' : '') +
+          '</td><td>' +
           (r.status === 'active'
             ? '<button class="text-button" data-group-edit="' + r.id + '">정정</button>'
             : '취소 기록') +
@@ -616,7 +660,13 @@ async function groupLessonForm() {
     field('수업일', 'date', 'date', today(), 'max="' + today() + '"') +
       select('적용 단가 / 수업', 'rateId', '') +
       field('시작 시간', 'time', 'time', '10:00') +
-      field('참여인원 (정산과 무관)', 'participants', 'number', 0, 'min="0" max="500" step="1"') +
+      field(
+        '참여인원 (0명은 하프 페이)',
+        'participants',
+        'number',
+        0,
+        'min="0" max="500" step="1"',
+      ) +
       '<p class="form-note" id="group-fee-preview"></p>',
     async (f, k) => {
       await api('/group-lessons', {
@@ -666,12 +716,20 @@ async function groupLessonForm() {
         const r = rates.find((r) => r.id === $('[name=rateId]').value);
         $('#group-fee-preview').textContent = r
           ? '이 수업료 ' +
-            money(Math.round((r.hourly_rate * r.billable_minutes) / 60)) +
-            '원 · 참여인원에 따라 바뀌지 않습니다.'
+            money(
+              Math.round(
+                Math.round((r.hourly_rate * r.billable_minutes) / 60) *
+                  (Number($('[name=participants]').value) === 0 ? 0.5 : 1),
+              ),
+            ) +
+            (Number($('[name=participants]').value) === 0
+              ? '원 · 0명 하프 페이 (50%)'
+              : '원 · 정상 지급 (100%)')
           : '해당 날짜에 적용할 단가가 없습니다.';
       }
       $('[name=date]').onchange = options;
       $('[name=rateId]').onchange = preview;
+      $('[name=participants]').oninput = preview;
       options();
     },
   );
@@ -682,7 +740,7 @@ function editGroupForm(row) {
     field('수업일', 'date', 'date', row.date, 'max="' + today() + '"') +
       field('시작 시간', 'time', 'time', row.time) +
       field(
-        '참여인원 (정산과 무관)',
+        '참여인원 (0명은 하프 페이)',
         'participants',
         'number',
         row.participants,
@@ -1171,6 +1229,12 @@ function passwordPage(forced = false) {
 }
 async function initialize() {
   window.scrollTo(0, 0);
+  if (isViewer()) {
+    people = user.person ? [user.person] : [];
+    profiles = {};
+    if (!allowed(view)) view = 'dashboard';
+    return load();
+  }
   const r = await api('/people');
   people = r.items;
   profiles = r.profiles;
@@ -1182,7 +1246,8 @@ async function load(extra = '') {
   const seq = ++sequence;
   try {
     let r;
-    if (view === 'dashboard') {
+    if (isViewer() && view === 'dashboard') r = await api('/overview?month=' + month);
+    else if (view === 'dashboard') {
       const [payroll, recent, reviewSummary, salesSummary] = await Promise.all([
         api('/payroll?month=' + month),
         api('/lessons?month=' + month + '&limit=5&order=recent'),
@@ -1258,7 +1323,7 @@ function render() {
     '</span><div>' +
     esc(user.name) +
     '<small>' +
-    (isAdmin() ? '관리자 · 전체 조회' : '직원 · 본인만 조회') +
+    (isViewer() ? '대표 · 현황 열람' : isAdmin() ? '관리자 · 전체 조회' : '직원 · 본인만 조회') +
     '</small></div></div></div></aside><main class="' +
     (!isAdmin() && (isTrainer() || isGroupOnly()) ? 'trainer-workspace ' : '') +
     'view-' +
@@ -1274,11 +1339,13 @@ function render() {
     '</span><div><button class="text-button" data-install hidden>앱 설치</button><button class="text-button" id="refresh">새로고침</button><button class="text-button" id="logout">로그아웃</button><span class="avatar light">' +
     esc(user.name.slice(0, 1)) +
     '</span></div></header><div class="content"><div class="heading"><div><span class="eyebrow">DOUBLE Y GYM · EONJU</span><h1>' +
-    (!isAdmin() && view === 'dashboard'
-      ? esc(user.name) + ' 선생님 👋'
-      : !isAdmin() && view === 'payroll'
-        ? '내 페이롤'
-        : titles[view]) +
+    (isViewer()
+      ? '센터 현황'
+      : !isAdmin() && view === 'dashboard'
+        ? esc(user.name) + ' 선생님 👋'
+        : !isAdmin() && view === 'payroll'
+          ? '내 페이롤'
+          : titles[view]) +
     '<em>.</em></h1><p>' +
     (isAdmin()
       ? '매출과 수업, 확인 기록과 정산을 관리하세요.'
@@ -1564,9 +1631,11 @@ function lessonsContent() {
               '" data-sign="' +
               l.id +
               '">' +
-              { unsigned: '회원 서명받기', signed: '✓ 서명 완료', stale: '재서명 필요' }[
-                l.confirmation.state
-              ] +
+              {
+                unsigned: '회원 서명받기',
+                signed: '✓ 서명 완료',
+                stale: '재서명 필요',
+              }[l.confirmation.state] +
               '</button>') +
           '</td><td><button class="text-button" data-history="' +
           l.id +
@@ -1603,9 +1672,13 @@ function peopleContent() {
           '</td><td>' +
           p.hire_month +
           (p.end_date ? '<small>종료 ' + p.end_date + '</small>' : '') +
-          '</td><td><button class="text-button" data-compensation="' +
-          p.id +
-          '">급여 조건·월 입력</button> <button class="text-button" data-employment="' +
+          '</td><td>' +
+          (p.profile === 'representative'
+            ? '<span class="tag">급여 없음 · 현황 열람</span> '
+            : '<button class="text-button" data-compensation="' +
+              p.id +
+              '">급여 조건·월 입력</button> ') +
+          '<button class="text-button" data-employment="' +
           p.id +
           '">계약 종료</button></td></tr>',
       ),
@@ -1620,7 +1693,11 @@ function peopleContent() {
           '</td><td>' +
           esc(a.name) +
           '</td><td>' +
-          (a.role === 'admin' ? '관리자' : '직원') +
+          (people.find((p) => p.id === a.personId)?.profile === 'representative'
+            ? '대표 · 현황 열람'
+            : a.role === 'admin'
+              ? '관리자'
+              : '직원') +
           '</td><td>' +
           (a.active ? '활성' : '중지') +
           (a.mustChange ? ' · 첫 비밀번호 변경 필요' : '') +
@@ -1900,15 +1977,19 @@ async function completeForm(key) {
           hourCycle: 'h23',
         }).format(new Date()),
       ) +
-      '<p class="form-note">수업을 저장한 뒤 회원 화면으로 전환합니다. 정확한 날짜·회차를 회원에게 확인받으세요. 미서명 기록도 예상 급여에 포함되지만 승인 전 검수가 필요합니다.</p>',
+      '<p class="form-note">' +
+      (extendedLessons
+        ? '서명을 저장해야 수업·잔여횟수·급여에 반영됩니다. 저장하지 않고 돌아가면 아무 변경도 남지 않습니다.'
+        : '수업을 저장한 뒤 회원 화면으로 전환합니다.') +
+      ' 정확한 날짜·회차를 회원에게 확인받으세요.</p>',
     async (f, key) => {
-      const row = await api('/lessons', {
-        method: 'POST',
-        key,
-        body: { contractId: f.get('contractId'), date: f.get('date'), time: f.get('time') },
-      });
-      $('#modal').close();
-      await showMember(await api('/member-mode', { method: 'POST', body: { lessonId: row.id } }));
+      const input = { contractId: f.get('contractId'), date: f.get('date'), time: f.get('time') };
+      if (extendedLessons) {
+        await showMember(await api('/member-mode', { method: 'POST', key, body: input }));
+      } else {
+        const row = await api('/lessons', { method: 'POST', key, body: input });
+        await showMember(await api('/member-mode', { method: 'POST', body: { lessonId: row.id } }));
+      }
     },
     '수업 기록 · 회원 서명',
   );
@@ -2131,6 +2212,8 @@ function newPersonForm() {
         const p = profiles[e.target.value];
         $('[name=base]').value = p.base;
         $('[name=tax]').value = p.tax / 100;
+        $('[name=base]').closest('label').hidden = e.target.value === 'representative';
+        $('[name=tax]').closest('label').hidden = e.target.value === 'representative';
       };
     },
   );
@@ -2182,6 +2265,13 @@ async function newAccountForm() {
     '계정 발급',
     () => {
       const update = () => {
+        const representative =
+          people.find((p) => p.id === $('[name=personId]').value)?.profile === 'representative';
+        if (representative) $('[name=role]').value = 'employee';
+        $('[name=role] option[value=admin]').disabled = representative;
+        $('[name=role] option[value=employee]').textContent = representative
+          ? '대표 · 현황 열람 전용'
+          : '직원 · 개인 자료만';
         const needed = $('[name=role]').value === 'admin' && !$('[name=personId]').value;
         $('#unlinked-admin-name').hidden = !needed;
         $('[name=name]').required = needed;
@@ -2919,7 +3009,22 @@ function bindPage() {
           )),
     );
 }
+async function leaveMemberMode() {
+  await api('/member-mode/exit', { method: 'POST', body: {} });
+  memberState = null;
+  $('#member-screen').hidden = true;
+  $('#member-screen').innerHTML = '';
+  $('#app').hidden = false;
+  view = allowed('dashboard') ? 'dashboard' : isGroupOnly() ? 'groups' : 'payroll';
+  if (history.state?.memberSigning) history.back();
+  await initialize();
+}
+window.addEventListener('popstate', () => {
+  if (extendedLessons && memberState) act(leaveMemberMode);
+});
 async function showMember(r) {
+  if (extendedLessons && !memberState && !history.state?.memberSigning)
+    history.pushState({ memberSigning: true }, '', location.href);
   document.body.classList.remove('menu-open');
   memberState = r;
   $('#modal').close();
@@ -2967,9 +3072,13 @@ async function showMember(r) {
             ' (한국 시간)</p><p class="muted">확인 감사합니다. 폰을 선생님께 돌려주세요.</p>'
           : '<div class="clear-line"><span>날짜와 회차를 확인한 뒤 서명합니다.</span><button id="clear-pad">다시 쓰기</button></div><label class="consent"><input type="checkbox" id="confirm-sign"> 위 날짜·회차의 수업을 진행했음을 확인합니다.</label><p class="muted">서명은 수업 내용·저장 시각과 함께 보관됩니다.</p><button class="primary wide" id="save-sign">확인 · 서명 저장</button>')
       : '') +
-    '<p class="form-error" id="sign-error"></p><button class="text-button" id="reload-sign">저장 상태 다시 확인</button><div class="member-return"><button id="show-return" class="text-button">선생님 화면으로 돌아가기</button><form id="return-form" hidden>' +
-    field('선생님 비밀번호', 'password', 'password', '', 'autocomplete="current-password"') +
-    '<div class="form-error"></div><button class="secondary wide" type="submit">비밀번호 확인 · 복귀</button></form></div></div>';
+    '<p class="form-error" id="sign-error"></p><button class="text-button" id="reload-sign">저장 상태 다시 확인</button><div class="member-return"><button id="show-return" class="text-button">홈으로 돌아가기</button>' +
+    (extendedLessons
+      ? ''
+      : '<form id="return-form" hidden>' +
+        field('선생님 비밀번호', 'password', 'password', '', 'autocomplete="current-password"') +
+        '<div class="form-error"></div><button class="secondary wide" type="submit">비밀번호 확인 · 복귀</button></form>') +
+    '</div></div>';
   const canvas = $('#sign-pad');
   let rect, ctx;
   function draw() {
@@ -3047,29 +3156,31 @@ async function showMember(r) {
   }
   $('#reload-sign').onclick = () => act(async () => showMember(await api('/member-mode')));
   $('#show-return').onclick = () => {
+    if (extendedLessons) return act(leaveMemberMode);
     $('#return-form').hidden = false;
     $('#return-form [name=password]').focus();
   };
-  $('#return-form').onsubmit = async (e) => {
-    e.preventDefault();
-    const button = e.target.querySelector('button');
-    button.disabled = true;
-    try {
-      await api('/member-mode/exit', {
-        method: 'POST',
-        body: { password: new FormData(e.target).get('password') },
-      });
-      memberState = null;
-      $('#member-screen').hidden = true;
-      $('#member-screen').innerHTML = '';
-      $('#app').hidden = false;
-      await initialize();
-    } catch (error) {
-      e.target.querySelector('.form-error').textContent = error.message;
-    } finally {
-      button.disabled = false;
-    }
-  };
+  if ($('#return-form'))
+    $('#return-form').onsubmit = async (e) => {
+      e.preventDefault();
+      const button = e.target.querySelector('button');
+      button.disabled = true;
+      try {
+        await api('/member-mode/exit', {
+          method: 'POST',
+          body: { password: new FormData(e.target).get('password') },
+        });
+        memberState = null;
+        $('#member-screen').hidden = true;
+        $('#member-screen').innerHTML = '';
+        $('#app').hidden = false;
+        await initialize();
+      } catch (error) {
+        e.target.querySelector('.form-error').textContent = error.message;
+      } finally {
+        button.disabled = false;
+      }
+    };
 }
 function bindInstall() {
   document.querySelectorAll('[data-install]').forEach((b) => {
@@ -3137,7 +3248,9 @@ async function boot() {
       throw e;
     }
     if (user.mustChange) return passwordPage(true);
-    if (user.memberMode) return showMember(await api('/member-mode'));
+    if (user.readOnly && user.memberMode)
+      await api('/member-mode/exit', { method: 'POST', body: {} });
+    else if (user.memberMode) return showMember(await api('/member-mode'));
     await initialize();
   } catch (e) {
     $('#app').innerHTML =
@@ -3272,7 +3385,7 @@ function transferForm(m) {
         .filter(
           (p) =>
             p.id !== m.person_id &&
-            !['fc', 'staff', 'part', 'daily', 'group'].includes(p.profile) &&
+            !['fc', 'staff', 'part', 'daily', 'group', 'representative'].includes(p.profile) &&
             (!p.end_date || p.end_date >= today()),
         )
         .map((p) => option(p.id, p.name))

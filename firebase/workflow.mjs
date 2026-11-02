@@ -20,6 +20,8 @@ export async function settings(s, a, kind, pid, b) {
   admin(a);
   const m = month(b.month),
     p = pid ? await person(s, a, pid, m) : null;
+  if (kind === 'inputs' && p?.profile === 'representative')
+    fail(400, '대표는 급여 입력 대상이 아닙니다.');
   if (kind !== 'inputs') {
     if (
       (
@@ -49,8 +51,8 @@ export async function settings(s, a, kind, pid, b) {
       person_id: pid,
       effective_month: m,
       profile,
-      base: integer(b.base, '기본급'),
-      tax_bps: integer(b.taxBps, '세율', 0, 10000),
+      base: profile === 'representative' ? 0 : integer(b.base, '기본급'),
+      tax_bps: profile === 'representative' ? 0 : integer(b.taxBps, '세율', 0, 10000),
       version: (old?.version || 0) + 1,
     };
     await s.put('salary_terms', key, r);

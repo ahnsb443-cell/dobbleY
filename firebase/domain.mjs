@@ -126,8 +126,11 @@ export async function addPerson(s, a, b) {
     person_id: p.id,
     effective_month: p.hire_month,
     profile,
-    base: integer(b.base ?? profiles[profile].base, '기본급'),
-    tax_bps: integer(b.taxBps ?? profiles[profile].tax, '세율', 0, 10000),
+    base: profile === 'representative' ? 0 : integer(b.base ?? profiles[profile].base, '기본급'),
+    tax_bps:
+      profile === 'representative'
+        ? 0
+        : integer(b.taxBps ?? profiles[profile].tax, '세율', 0, 10000),
     version: 1,
   };
   await s.put('people', p.id, p, { create: true });
@@ -230,7 +233,7 @@ async function lessonGuard(s, c, date) {
     await guard(s, m, c.person_id);
 }
 const slot = (l) => JSON.stringify([l.contract_id, l.date, l.time]);
-export async function addLesson(s, a, b, { duetSessionId = null } = {}) {
+export async function addLesson(s, a, b, { duetSessionId = null, lessonId = null } = {}) {
   const c = await owned(s, a, 'contracts', b.contractId),
     p = await person(s, a, c.person_id);
   const date = day(b.date),
@@ -248,7 +251,7 @@ export async function addLesson(s, a, b, { duetSessionId = null } = {}) {
   await lessonGuard(s, c, date);
   if ((await progress(s, c)).remaining <= 0) fail(409, '잔여 횟수가 없습니다.');
   const l = {
-    id: id(),
+    id: lessonId || id(),
     contract_id: c.id,
     person_id: c.person_id,
     member_id: c.member_id,
@@ -433,14 +436,19 @@ export async function listLessons(s, a, url) {
 export async function eligible(s, m) {
   const runs = await monthRows(s, 'payroll_runs', m),
     ids = new Set(runs.map((r) => r.person_id));
-  return (await s.query('people', [['hire_month', '<=', m]]))
-    .filter((p) => !p.end_date || p.end_date >= m + '-01' || ids.has(p.id))
-    .sort((a, b) => a.name.localeCompare(b.name));
+  const out = [];
+  for (const p of await s.query('people', [['hire_month', '<=', m]])) {
+    if (p.end_date && p.end_date < m + '-01' && !ids.has(p.id)) continue;
+    const profile = (await termsAt(s, p.id, m))?.profile || p.profile;
+    if (profile !== 'representative') out.push(p);
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name));
 }
 export async function calculate(s, p, m) {
   const terms = await termsAt(s, p.id, m);
   if (!terms) fail(409, '급여 조건이 없습니다.');
   p = { ...p, profile: terms.profile };
+  if (p.profile === 'representative') fail(404, '대표는 급여 정산 대상이 아닙니다.');
   const rule = (
     await s.query(
       'rules',
@@ -631,6 +639,7 @@ export async function calculate(s, p, m) {
 }
 export async function result(s, a, pid, m) {
   const p = await person(s, a, pid, m);
+  if (p.profile === 'representative') fail(404, '대표는 급여 정산 대상이 아닙니다.');
   month(m);
   const run = (await s.get('payroll_runs', pair(pid, m))) || {
     state: 'draft',

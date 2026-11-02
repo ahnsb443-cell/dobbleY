@@ -100,6 +100,7 @@ export async function issueSession(svc, idToken, secure, res) {
       expiresAt: new Date(Date.now() + 43200000),
       password_version: a.version,
       member_lesson_id: null,
+      member_draft: null,
     });
   });
   res.setHeader('Set-Cookie', sessionCookie(raw, secure));
@@ -109,6 +110,7 @@ async function allowed(s, a) {
   if (!a || !a.active) fail(401, '사용 가능한 계정이 아닙니다.');
   const p = a.person_id ? await s.get('people', a.person_id) : null;
   if (p?.end_date && p.end_date < today()) fail(401, '계약이 종료된 계정입니다.');
+  return !!p && (await person(s, a, p.id)).profile === 'representative';
 }
 export async function authenticate(svc, req) {
   const raw = req.headers.cookie
@@ -137,22 +139,31 @@ export async function authenticate(svc, req) {
     session.password_version !== a?.version
   )
     fail(401, '로그인이 만료되었습니다.');
-  await allowed(s, a);
+  const readOnly = await allowed(s, a);
   return {
     ...a,
+    read_only: readOnly,
     session_hash: key,
     csrf: session.csrf,
     member_lesson_id: session.member_lesson_id,
+    member_draft: session.member_draft || null,
   };
 }
 export async function userView(s, a) {
-  return { ...accountView(a), person: a.person_id ? await person(s, a, a.person_id) : null };
+  const p = a.person_id ? await person(s, a, a.person_id) : null;
+  return { ...accountView(a), person: p, readOnly: p?.profile === 'representative' };
 }
 export function checkSession(a, path, method) {
+  if (a.read_only) {
+    const read = method === 'GET' && ['/api/me', '/api/overview'].includes(path);
+    const self =
+      method === 'POST' && ['/api/password', '/api/logout', '/api/member-mode/exit'].includes(path);
+    if (!read && !self) fail(403, '대표 계정은 센터 현황 열람만 가능합니다.');
+  }
   if (a.must_change && !['/api/me', '/api/password', '/api/logout'].includes(path))
     fail(403, '임시 비밀번호를 먼저 변경하세요.');
   if (
-    a.member_lesson_id &&
+    (a.member_lesson_id || a.member_draft) &&
     (![
       '/api/me',
       '/api/logout',
@@ -171,14 +182,16 @@ export function checkSession(a, path, method) {
 export async function freshActor(s, a) {
   const current = await s.get('accounts', a.id),
     session = await s.get('auth_sessions', a.session_hash);
-  await allowed(s, current);
+  const readOnly = await allowed(s, current);
   if (!session || session.expires < Date.now() || session.password_version !== current.version)
     fail(401, '로그인이 만료되었습니다.');
   return {
     ...current,
+    read_only: readOnly,
     session_hash: a.session_hash,
     csrf: session.csrf,
     member_lesson_id: session.member_lesson_id,
+    member_draft: session.member_draft || null,
   };
 }
 export async function provision(svc, b, save) {

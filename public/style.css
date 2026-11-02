@@ -3232,3 +3232,9 @@ body.menu-open {
 .danger-text {
   color: #c62828;
 }
+@media (max-width: 760px) {
+  .menu-toggle .brand-logo {
+    width: 32px;
+    height: 38px;
+  }
+}
