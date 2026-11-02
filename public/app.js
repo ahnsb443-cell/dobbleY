@@ -1547,7 +1547,8 @@ function membersContent() {
   return (
     '<section class="panel"><div class="panel-head"><div><h3>담당 회원과 PT 잔여횟수 <span class="tag">이 페이지 ' +
     (data.items || []).length +
-    '명</span></h3><p>다짐 CRM 자료를 기준으로 회원을 선택하고 수업·서명을 기록합니다.</p></div><div class="actions">' +
+    '명</span></h3><p>담당 회원의 상품별 잔여를 확인하고 신규 등록·추가 상품·수업 서명을 기록합니다.</p></div><div class="actions">' +
+    '<button class="primary" id="new-registration">＋ 신규 회원 등록</button>' +
     (isAdmin() ? '<button class="secondary" id="bulk-import">다짐 자료 반영</button>' : '') +
     '</div></div><div class="toolbar"><input id="member-search" placeholder="회원 이름 검색" aria-label="회원 이름 검색"><button class="secondary" id="member-search-button">검색</button></div><div class="member-grid">' +
     (data.items || [])
@@ -1563,7 +1564,9 @@ function membersContent() {
           m.remaining +
           '<small>회</small></b></div><div class="actions"><button class="secondary" data-contracts="' +
           m.id +
-          '">잔여 · 정산 기준</button></div><button class="primary wide" data-complete="' +
+          '">잔여 · 정산 기준</button><button class="secondary" data-renew="' +
+          m.id +
+          '">＋ 추가 상품</button></div><button class="primary wide" data-complete="' +
           m.id +
           '">PT 수업 체크 · 서명</button></article>',
       )
@@ -1572,7 +1575,7 @@ function membersContent() {
     (!(data.items || []).length
       ? empty(
           '담당 회원이 없습니다',
-          '관리자가 다짐 CRM의 PT 자료를 반영하면 회원을 선택할 수 있습니다.',
+          '신규 회원을 등록하거나 관리자에게 다짐 PT 자료 반영을 요청하세요.',
         )
       : '') +
     pager(data.next) +
@@ -1856,12 +1859,88 @@ function auditContent() {
     '</section>'
   );
 }
+async function registrationForm(memberId = null) {
+  const existing = memberId ? await api('/members/' + memberId) : null;
+  const trainers = people.filter(
+    (p) =>
+      !['fc', 'staff', 'part', 'daily', 'group', 'representative'].includes(p.profile) &&
+      (!p.end_date || p.end_date >= today()),
+  );
+  modal(
+    existing ? existing.member.name + ' · 추가 상품 등록' : '신규 PT 회원 등록',
+    (existing
+      ? '<p class="form-note">기존 상품과 잔여 수업은 유지하고 새 상품을 별도로 추가합니다.</p>'
+      : field('회원 이름', 'name') +
+        (isAdmin()
+          ? select('담당 선생님', 'personId', trainers.map((p) => option(p.id, p.name)).join(''))
+          : '<p class="form-note">본인 담당 회원으로 등록됩니다.</p>')) +
+      select('개인 수업 구분', 'category', option('pt', 'PT') + option('pilates', '필라테스')) +
+      field('결제일', 'paidDate', 'date', today()) +
+      field('수업 시작일', 'startDate', 'date', today()) +
+      field('등록 횟수', 'quantity', 'number', 10, 'min="1" max="10000" step="1"') +
+      field('총 결제금액 (부가세 포함)', 'amount', 'number', '', 'min="1" step="1"') +
+      '<p class="form-note" id="registration-preview">결제금액과 횟수를 입력하면 회당 공급단가를 표시합니다.</p>' +
+      (isAdmin() && extendedLessons
+        ? '<label class="field">회당 고정 수업료 (해당하는 경우만)<input name="fixedFee" type="number" min="1" max="1000000" step="1"></label>'
+        : '<p class="form-note">회당 고정 수업료는 관리자가 설정합니다.</p>') +
+      '<label class="consent"><input type="checkbox" name="paymentConfirmed" required> 해당 상품의 결제가 완료되었음을 확인합니다.</label><p class="form-note">개인 PT·필라테스 수업과 급여 계산용 등록입니다. ' +
+      (existing ? '추가 등록 매출' : '신규 등록 매출') +
+      '로 반영되며, 회원 서명이나 수업 차감은 생성하지 않습니다.</p>',
+    async (f, k) => {
+      await api('/registrations', {
+        method: 'POST',
+        key: k,
+        body: {
+          ...(existing
+            ? { memberId }
+            : { name: f.get('name'), personId: isAdmin() ? f.get('personId') : user.personId }),
+          category: f.get('category'),
+          paidDate: f.get('paidDate'),
+          startDate: f.get('startDate'),
+          quantity: Number(f.get('quantity')),
+          amount: Number(f.get('amount')),
+          vatIncluded: true,
+          paymentConfirmed: f.get('paymentConfirmed') === 'on',
+          saleType: existing ? 'renew' : 'new',
+          ...(isAdmin() && f.get('fixedFee') ? { fixedFee: Number(f.get('fixedFee')) } : {}),
+        },
+      });
+      view = 'members';
+      await load();
+      toast(
+        existing
+          ? '추가 상품을 등록했습니다. 기존 잔여 수업은 유지됩니다.'
+          : '신규 회원을 등록했습니다.',
+      );
+    },
+    '등록 저장',
+    () => {
+      const form = $('#modal-form');
+      const update = () => {
+        const amount = Number(form.elements.amount.value),
+          quantity = Number(form.elements.quantity.value),
+          net = Math.round(amount / 1.1);
+        $('#registration-preview').textContent =
+          amount > 0 && quantity > 0
+            ? '공급가액 ' +
+              money(net) +
+              '원 · 회당 공급단가 ' +
+              money(Math.round(net / quantity)) +
+              '원 (VAT 제외)'
+            : '결제금액과 횟수를 입력하면 회당 공급단가를 표시합니다.';
+      };
+      form.elements.amount.oninput = update;
+      form.elements.quantity.oninput = update;
+      update();
+    },
+  );
+}
 async function memberContracts(key) {
   const r = await api('/members/' + key);
   modal(
     r.member.name + ' · 잔여 · 정산 기준',
     table(
-      ['수업 구분', '전체 / 진행 / 잔여', '회당 공급단가', '지급 기준'],
+      ['수업 구분', '전체 / 진행 / 잔여', '회당 공급단가', '지급 기준', '상품별 서명지'],
       r.contracts.map(
         (c) =>
           '<tr><td>' +
@@ -1886,18 +1965,38 @@ async function memberContracts(key) {
               '">수업료 설정</button>'
             : '') +
           (!c.active ? '<small>수업 대상 종료</small>' : '') +
+          '</td><td>' +
+          (extendedLessons
+            ? '<button class="secondary" type="button" data-product-records="' +
+              c.id +
+              '">서명 목록</button>' +
+              (c.active && c.remaining > 0
+                ? '<button class="text-button" type="button" data-product-check="' +
+                  c.id +
+                  '">수업 체크·서명</button>'
+                : '')
+            : '') +
           '</td></tr>',
       ),
     ) +
-      '<p class="form-note">회원번호 #' +
+      '<button class="secondary" type="button" id="add-member-product">＋ 추가 상품 등록</button><p class="form-note">회원번호 #' +
       r.member.id.slice(0, 6) +
-      ' · 다짐 CRM 자료에 따른 수업 차감·급여 계산 기준입니다. 회원권을 다시 기입하지 않아도 됩니다.</p>' +
+      ' · 상품별로 수업을 차감하고 급여를 계산합니다. 추가 등록은 기존 상품·잔여를 유지한 새 상품으로 저장합니다.</p>' +
       (isAdmin()
         ? '<button class="secondary" type="button" id="transfer-member">담당자 인수인계</button>'
         : ''),
     () => {},
     '닫기',
     () => {
+      $('#add-member-product').onclick = () => act(() => registrationForm(key));
+      document
+        .querySelectorAll('[data-product-records]')
+        .forEach(
+          (b) => (b.onclick = () => act(() => productSignatures(key, b.dataset.productRecords))),
+        );
+      document
+        .querySelectorAll('[data-product-check]')
+        .forEach((b) => (b.onclick = () => act(() => completeForm(key, b.dataset.productCheck))));
       document.querySelectorAll('[data-close-contract]').forEach(
         (b) =>
           (b.onclick = () => {
@@ -1941,11 +2040,74 @@ async function memberContracts(key) {
     },
   );
 }
-async function completeForm(key) {
+async function productSignatures(memberId, contractId, offset = 0) {
+  const r = await api('/contracts/' + contractId + '/lessons?offset=' + offset),
+    c = r.contract;
+  modal(
+    r.member.name + ' · ' + c.quantity + '회 상품 서명지',
+    '<p class="form-note">상품 시작 ' +
+      esc(c.start_date) +
+      ' · 전체 ' +
+      c.quantity +
+      '회 / 진행 ' +
+      c.used +
+      '회 / 잔여 ' +
+      c.remaining +
+      '회</p>' +
+      (c.active && c.remaining > 0
+        ? '<button class="primary" type="button" id="product-check-now">이 상품 수업 체크·서명</button>'
+        : '') +
+      (r.items.length
+        ? table(
+            ['회차', '수업일·시간', '회원 확인'],
+            r.items.map(
+              (l) =>
+                '<tr><td>' +
+                l.ordinal +
+                '회차</td><td>' +
+                l.date +
+                '<small>' +
+                l.time +
+                '</small></td><td><button class="text-button" type="button" data-ledger-history="' +
+                l.id +
+                '">' +
+                {
+                  signed: '서명 완료',
+                  noshow: '노쇼',
+                  unsigned: '서명 대기',
+                  stale: '재서명 필요',
+                }[l.confirmation.state] +
+                '</button></td></tr>',
+            ),
+          )
+        : empty(
+            '새 상품 서명지입니다',
+            '이 상품의 수업을 체크하고 서명을 저장하면 회차별로 기록됩니다.',
+          )) +
+      (r.nextOffset !== null
+        ? '<button class="secondary" type="button" id="product-next">다음 수업 기록 →</button>'
+        : ''),
+    () => {},
+    '닫기',
+    () => {
+      if ($('#product-check-now'))
+        $('#product-check-now').onclick = () => act(() => completeForm(memberId, contractId));
+      if ($('#product-next'))
+        $('#product-next').onclick = () =>
+          act(() => productSignatures(memberId, contractId, r.nextOffset));
+      document
+        .querySelectorAll('[data-ledger-history]')
+        .forEach((b) => (b.onclick = () => act(() => showHistory(b.dataset.ledgerHistory))));
+    },
+  );
+}
+async function completeForm(key, preferredContractId = null) {
   const r = await api('/members/' + key),
     available = r.contracts.filter((c) => c.active && c.remaining > 0);
   if (!available.length)
-    return toast('잔여 수업이 없습니다. 관리자에게 다짐 CRM 잔여 자료 확인을 요청하세요.');
+    return toast(
+      '잔여 수업이 없습니다. 추가 상품을 등록하거나 관리자에게 잔여 자료 확인을 요청하세요.',
+    );
   modal(
     r.member.name + ' · 수업 기록',
     select(
@@ -1953,7 +2115,11 @@ async function completeForm(key) {
       'contractId',
       available
         .map((c) =>
-          option(c.id, c.start_date + ' · ' + c.quantity + '회 등록 · 잔여 ' + c.remaining + '회'),
+          option(
+            c.id,
+            c.start_date + ' · ' + c.quantity + '회 등록 · 잔여 ' + c.remaining + '회',
+            c.id === preferredContractId,
+          ),
         )
         .join(''),
     ) +
@@ -2746,6 +2912,10 @@ function bindPage() {
   document
     .querySelectorAll('[data-payroll]')
     .forEach((b) => (b.onclick = () => act(() => payrollDetail(b.dataset.payroll))));
+  on('#new-registration', () => registrationForm());
+  document
+    .querySelectorAll('[data-renew]')
+    .forEach((b) => (b.onclick = () => act(() => registrationForm(b.dataset.renew))));
   on('#payroll-export', async () =>
     csv(
       [

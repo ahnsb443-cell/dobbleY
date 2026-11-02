@@ -26,6 +26,8 @@ test(
       route,
       { method = 'GET', body, auth = {}, key = randomBytes(16).toString('hex'), external } = {},
     ) {
+      if (method === 'POST' && ['/registrations', '/contracts'].includes(route))
+        body = { paymentConfirmed: true, ...body };
       const r = await fetch(origin + '/api' + route, {
         method,
         headers: {
@@ -122,12 +124,31 @@ test(
           amount: 5000000,
           quantity: 50,
         };
+        for (const paymentConfirmed of [false, undefined]) {
+          assert.equal(
+            (
+              await req('/registrations', {
+                method: 'POST',
+                auth: teacher,
+                body: { ...body, paymentConfirmed },
+              })
+            ).status,
+            400,
+          );
+        }
+        assert.equal(
+          (await svc.db.collection('members').where('name', '==', body.name).get()).size,
+          0,
+          '미결제는 회원·상품을 생성하지 않음',
+        );
         const r = await ok('/registrations', {
           method: 'POST',
           auth: teacher,
           body,
           key: 'registration-key-1',
         });
+        assert.equal(r.body.contract.payment_confirmed, true);
+        assert.ok(r.body.contract.payment_confirmed_at);
         c = r.body.contract;
         assert.deepEqual(
           (

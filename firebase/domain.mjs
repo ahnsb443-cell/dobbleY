@@ -191,6 +191,9 @@ export async function addContract(s, a, b) {
     carry_date: carryDate,
     category: b.category,
     sale_type: b.saleType,
+    ...(b.paymentConfirmed === true
+      ? { payment_confirmed: true, payment_confirmed_at: now(), payment_confirmed_by: a.id }
+      : {}),
     amount: b.vatIncluded ? Math.round(raw / 1.1) : raw,
     gross_amount: b.vatIncluded ? raw : null,
     vat_amount: b.vatIncluded ? raw - Math.round(raw / 1.1) : null,

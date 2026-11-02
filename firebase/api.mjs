@@ -261,13 +261,40 @@ export function createFirebaseApi(
       }
     }
     if (kind === 'registrations' && method === 'POST') {
+      if (b.paymentConfirmed !== true)
+        fail(400, '결제가 완료된 회원·상품만 등록할 수 있습니다. 결제 완료를 확인하세요.');
       const member = b.memberId
         ? await d.owned(s, a, 'members', b.memberId)
         : await d.addMember(s, a, { name: b.name, personId: b.personId || a.person_id });
       return { member, contract: await d.addContract(s, a, { ...b, memberId: member.id }) };
     }
     if (kind === 'contracts') {
-      if (!key && method === 'POST') return d.addContract(s, a, b);
+      if (!key && method === 'POST') {
+        if (b.paymentConfirmed !== true) fail(400, '결제 완료를 확인한 상품만 등록할 수 있습니다.');
+        return d.addContract(s, a, b);
+      }
+      if (path[3] === 'lessons' && method === 'GET') {
+        const contract = await d.owned(s, a, 'contracts', key);
+        const offset = Number(url.searchParams.get('offset') || 0);
+        if (!Number.isSafeInteger(offset) || offset < 0) fail(400, '페이지를 확인하세요.');
+        const rows = await d.contractLessons(s, key),
+          items = [];
+        for (const [i, l] of rows.slice(offset, offset + 100).entries())
+          items.push({
+            id: l.id,
+            date: l.date,
+            time: l.time,
+            ordinal: contract.carry_used + offset + i + 1,
+            confirmation: await d.confirmation(s, l),
+          });
+        const member = await d.required(s, 'members', contract.member_id);
+        return {
+          contract: await d.progress(s, contract),
+          member: { id: member.id, name: member.name },
+          items,
+          nextOffset: offset + 100 < rows.length ? offset + 100 : null,
+        };
+      }
       if (path[3] === 'fee' && method === 'PATCH') return d.setContractFee(s, a, key, b);
       if (path[3] === 'close' && method === 'POST') return w.closeContract(s, a, key, b);
     }

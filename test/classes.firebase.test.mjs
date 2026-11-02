@@ -1203,3 +1203,53 @@ test(
     );
   },
 );
+
+test(
+  '모든 PT 강사·PT팀장의 공통 개인 매출 성과금 경계 및 팀 커미션 별도 합산',
+  { skip: !enabled, timeout: 120000 },
+  async () => {
+    const svc = services('demo-common-bonus-' + randomBytes(4).toString('hex')),
+      a = { id: 'admin', role: 'admin' },
+      run = (fn) => atomic(svc.db, fn),
+      read = () => new Store(svc.db);
+    const people = [];
+    for (const profile of ['morning', 'standard', 'mixed', 'lead', 'manager', 'fc'])
+      people.push(
+        await run((s) => d.addPerson(s, a, { name: profile, profile, hireMonth: '2026-01' })),
+      );
+    for (const p of people) {
+      for (const [amount, expected] of [
+        [9999999, 0],
+        [10000000, 200000],
+        [11999999, 200000],
+        [12000000, 400000],
+        [14000000, 600000],
+      ]) {
+        await run((s) =>
+          s.put('sales', 'bonus-' + p.id, {
+            id: 'bonus-' + p.id,
+            date: '2026-11-01',
+            month: '2026-11',
+            person_id: p.id,
+            category: 'pt',
+            kind: 'sale',
+            amount,
+            team_pt_eligible: p.profile !== 'manager',
+          }),
+        );
+        const r = await d.calculate(read(), p, '2026-11');
+        assert.equal(
+          r.bonus,
+          ['manager', 'fc'].includes(p.profile) ? 0 : expected,
+          p.profile + ' ' + amount,
+        );
+        if (p.profile === 'lead')
+          assert.equal(
+            r.gross,
+            r.base + r.bonus + r.incentive,
+            '개인 성과금과 팀 성과금 각각 합산',
+          );
+      }
+    }
+  },
+);

@@ -27,6 +27,14 @@ const pw = () => randomBytes(20).toString('hex'),
   steps = [],
   errors = [];
 if (reportMode) await mkdir(out, { recursive: true });
+const guideMode = process.argv.includes('--guide');
+const guideDir = '/workspace/artifacts/dobbley-guide/screens';
+if (guideMode) await mkdir(guideDir, { recursive: true });
+async function guideCapture(page, name) {
+  if (guideMode)
+    await page.screenshot({ path: path.join(guideDir, name + '.png'), fullPage: false });
+}
+
 async function snap(page, title, text) {
   if (!reportMode) return;
   await page.evaluate(() => {
@@ -175,6 +183,8 @@ async function record(page, context, name, date, capture = false) {
   } else await returnTeacher(page);
 }
 async function request(page, route, method = 'GET', body) {
+  if (firebaseMode && method === 'POST' && ['/registrations', '/contracts'].includes(route))
+    body = { paymentConfirmed: true, ...body };
   return page.evaluate(
     async ({ route, method, body }) => {
       const me = await fetch('/api/me').then((r) => r.json());
@@ -191,6 +201,166 @@ async function request(page, route, method = 'GET', body) {
       return { status: r.status, body: await r.json() };
     },
     { route, method, body },
+  );
+}
+async function memberRegistrationScenario(admin, teacher, pid) {
+  await teacher.locator('#month').fill('2026-11');
+  await teacher.locator('#month').dispatchEvent('change');
+  await navigate(teacher, 'dashboard');
+  await teacher.locator('.trainer-amount').waitFor();
+  await guideCapture(teacher, '03-home');
+  await navigate(teacher, 'members');
+  await teacher.locator('#new-registration').click();
+  await teacher.locator('[name=name]').fill('모바일 신규·추가 회원');
+  assert.equal(await teacher.locator('#modal [name=personId], #modal [name=fixedFee]').count(), 0);
+  await teacher.locator('[name=paidDate]').fill('2026-11-01');
+  await teacher.locator('[name=startDate]').fill('2026-11-01');
+  await guideCapture(teacher, '04-new-member');
+  await teacher.locator('[name=quantity]').fill('10');
+  await teacher.locator('[name=amount]').fill('1100000');
+  assert.match(
+    await teacher.locator('#registration-preview').textContent(),
+    /공급가액 1,000,000원/,
+  );
+  assert.equal(
+    await teacher.locator('#modal-form').evaluate((form) => form.checkValidity()),
+    false,
+    '결제 완료 확인 전 저장 불가',
+  );
+  await teacher.locator('[name=paymentConfirmed]').check();
+  await teacher.locator('#modal-form button[type=submit]').scrollIntoViewIfNeeded();
+  await guideCapture(teacher, '05-paid-confirm');
+  await clickSubmit(teacher);
+  await closed(teacher);
+  let member = (await request(teacher, '/members?q=' + encodeURIComponent('모바일 신규·추가 회원')))
+    .body.items[0];
+  const memberId = member.id;
+  assert.equal(member.person_id, pid);
+  assert.equal(member.remaining, 10);
+  let details = (await request(teacher, '/members/' + memberId)).body;
+  const original = details.contracts[0];
+  assert.equal(original.amount, 1000000);
+  assert.equal(original.payment_confirmed, true);
+  const checked = await request(teacher, '/lessons', 'POST', {
+    contractId: original.id,
+    date: '2026-11-01',
+    time: '18:00',
+  });
+  assert.equal(checked.status, 200);
+  await navigate(teacher, 'members');
+  await teacher.locator('[data-renew="' + memberId + '"]').click();
+  await teacher.locator('#modal h2').filter({ hasText: '추가 상품 등록' }).waitFor();
+  assert.equal(await teacher.locator('#modal [name=name]').count(), 0);
+  await teacher.locator('[name=paidDate]').fill('2026-11-02');
+  await teacher.locator('[name=startDate]').fill('2026-11-02');
+  await teacher.locator('[name=quantity]').fill('20');
+  await teacher.locator('[name=amount]').fill('3300000');
+  await teacher.locator('[name=amount]').scrollIntoViewIfNeeded();
+  await guideCapture(teacher, '06-add-product');
+  await teacher.locator('[name=paymentConfirmed]').check();
+  await clickSubmit(teacher);
+  await closed(teacher);
+  const matches = (
+    await request(teacher, '/members?q=' + encodeURIComponent('모바일 신규·추가 회원'))
+  ).body.items;
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0].id, memberId);
+  assert.equal(matches[0].remaining, 29);
+  details = (await request(teacher, '/members/' + memberId)).body;
+  assert.equal(details.contracts.length, 2);
+  assert.equal(details.contracts.find((c) => c.id === original.id).remaining, 9);
+  const added = details.contracts.find((c) => c.id !== original.id);
+  assert.equal(added.remaining, 20);
+  assert.equal(added.amount, 3000000);
+  assert.equal(added.sale_type, 'renew');
+  const pay = (await request(teacher, '/payroll/' + pid + '?month=2026-11')).body;
+  assert.equal(pay.newSales, 1000000);
+  assert.equal(pay.renewSales, 3000000);
+  await teacher.locator('[data-contracts="' + memberId + '"]').click();
+  await teacher.locator('#add-member-product').waitFor();
+  assert.equal(await teacher.locator('#modal tbody tr').count(), 2);
+  await teacher.locator('#modal-x').click();
+  const originalLedger = (await request(teacher, '/contracts/' + original.id + '/lessons')).body;
+  const newLedger = (await request(teacher, '/contracts/' + added.id + '/lessons')).body;
+  assert.equal(originalLedger.items.length, 1);
+  assert.equal(newLedger.items.length, 0);
+  if (guideMode) {
+    await teacher.locator('[data-contracts="' + memberId + '"]').click();
+    await teacher.locator('[data-product-records="' + added.id + '"]').click();
+    await teacher.getByText('새 상품 서명지입니다', { exact: true }).waitFor();
+    await guideCapture(teacher, '07-new-sign-sheet');
+    await teacher.locator('#modal-x').click();
+  }
+  await teacher.locator('[data-complete="' + memberId + '"]').click();
+  await teacher.locator('#modal [name=contractId]').waitFor();
+  assert.equal(await teacher.locator('[name=contractId] option').count(), 2);
+  await teacher.locator('[name=contractId]').selectOption(added.id);
+  await guideCapture(teacher, '08-select-product');
+  await teacher.locator('[name=date]').fill('2026-11-02');
+  await teacher.locator('[name=time]').fill('18:00');
+  await clickSubmit(teacher);
+  await teacher.waitForSelector('#sign-pad');
+  const preview = (await request(teacher, '/member-mode')).body;
+  assert.equal(preview.snapshot.contractId, added.id);
+  assert.equal(preview.snapshot.remaining, 19);
+  await returnTeacher(teacher);
+  details = (await request(teacher, '/members/' + memberId)).body;
+  assert.equal(details.contracts.find((c) => c.id === added.id).remaining, 20);
+  assert.equal(details.contracts.find((c) => c.id === original.id).remaining, 9);
+  if (guideMode) {
+    await navigate(teacher, 'members');
+    await teacher.locator('[data-contracts="' + memberId + '"]').click();
+    await teacher.locator('[data-product-records="' + added.id + '"]').click();
+    await teacher.locator('#product-check-now').click();
+    await teacher.locator('[name=contractId]').waitFor();
+    assert.equal(await teacher.locator('[name=contractId]').inputValue(), added.id);
+    await teacher.locator('[name=date]').fill('2026-11-02');
+    await teacher.locator('[name=time]').fill('19:00');
+    await clickSubmit(teacher);
+    await teacher.locator('#sign-pad').waitFor();
+    await teacher.locator('#confirm-sign').check();
+    await draw(teacher, teacher.context());
+    await teacher.locator('#save-sign').scrollIntoViewIfNeeded();
+    await guideCapture(teacher, '09-member-sign');
+    await teacher.locator('#save-sign').click();
+    await teacher.waitForFunction(() =>
+      document.querySelector('.member-intro')?.textContent.includes('저장 완료'),
+    );
+    await guideCapture(teacher, '10-saved');
+    await teacher.waitForFunction(() => document.querySelector('#member-screen').hidden);
+    await navigate(teacher, 'members');
+    await teacher.locator('[data-contracts="' + memberId + '"]').click();
+    await teacher.locator('[data-product-records="' + added.id + '"]').click();
+    await teacher.locator('[data-ledger-history]').waitFor();
+    await guideCapture(teacher, '11-product-history');
+    await teacher.locator('#modal-x').click();
+    await navigate(teacher, 'payroll');
+    await teacher.locator('.trainer-net').waitFor();
+    await guideCapture(teacher, '12-payroll');
+  }
+  const other = (
+    await request(admin, '/people', 'POST', {
+      name: '추가상품 다른 담당',
+      profile: 'standard',
+      hireMonth: '2026-01',
+    })
+  ).body;
+  const foreign = (
+    await request(admin, '/members', 'POST', { name: '다른 선생님 회원', personId: other.id })
+  ).body;
+  const denied = await request(teacher, '/registrations', 'POST', {
+    memberId: foreign.id,
+    paidDate: '2026-11-02',
+    startDate: '2026-11-02',
+    amount: 1100000,
+    vatIncluded: true,
+    quantity: 10,
+    category: 'pt',
+    saleType: 'renew',
+  });
+  assert.equal(denied.status, 403);
+  console.log(
+    'PASS: teacher registers own new member and adds a separate product with nine lessons remaining; identity, balance, VAT, new/renew sales and ownership are preserved.',
   );
 }
 async function contractTermsScenario(admin, teacher, pid) {
@@ -394,7 +564,7 @@ async function fixedFeeScenario(admin) {
   });
   assert.equal(seeded.status, 200);
   await navigate(admin, 'members');
-  assert.equal(await admin.locator('#new-registration, [data-renew]').count(), 0);
+  await admin.locator('#new-registration').waitFor();
   const member = (await request(admin, '/members?q=' + encodeURIComponent('고정 이만원 회원'))).body
     .items[0];
   const contract = (await request(admin, '/members/' + member.id)).body.contracts[0];
@@ -484,6 +654,7 @@ async function noShowScenario(admin, teacher, context, pid) {
   await open();
   await teacher.locator('#no-show').check();
   await teacher.locator('#confirm-sign').check();
+  await guideCapture(teacher, '13-no-show');
   await teacher.locator('#save-sign').click();
   await teacher.getByText('노쇼 저장 완료', { exact: true }).waitFor();
   assert.equal(await teacher.locator('#sign-pad').count(), 0);
@@ -569,7 +740,7 @@ async function extendedScenario(admin, browser) {
       vatIncluded: true,
     });
     await navigate(page, 'members');
-    assert.equal(await page.locator('#new-registration, [data-renew]').count(), 0);
+    await page.locator('#new-registration').waitFor();
     const member = (await checked(page, '/members?q=' + encodeURIComponent(name))).items[0];
     const contract = (await checked(page, '/members/' + member.id)).contracts[0];
     assert.equal(contract.amount, Math.round(Number(amount) / 1.1));
@@ -591,6 +762,7 @@ async function extendedScenario(admin, browser) {
   await page.locator('[name=date]').dispatchEvent('change');
   await page.locator('[name=time]').fill('18:00');
   assert.match(await page.locator('#group-fee-preview').innerText(), /17,500.*50%/);
+  await guideCapture(page, '14-group-half-pay');
   await page.locator('[name=participants]').fill('1');
   assert.match(await page.locator('#group-fee-preview').innerText(), /35,000.*100%/);
   await page.locator('[name=participants]').fill('5');
@@ -792,10 +964,13 @@ try {
     teacher = await context.newPage();
   teacher.on('pageerror', (e) => errors.push(e.message));
   await teacher.goto(url);
+  await teacher.locator('#login-form').waitFor();
+  await guideCapture(teacher, '01-login');
   await teacher.locator('[name=username]').fill('trainer01');
   await teacher.locator('[name=password]').fill(temp);
   await teacher.locator('#login-form button').click();
   await teacher.waitForSelector('#password-form');
+  await guideCapture(teacher, '02-first-password');
   await teacher.locator('[name=currentPassword]').fill(temp);
   await teacher.locator('[name=password]').fill(teacherPw);
   await teacher.locator('[name=confirm]').fill(teacherPw);
@@ -808,7 +983,7 @@ try {
   assert.equal(await teacher.locator('[data-view=people]').count(), 0);
   assert.equal(await teacher.locator('.member-card').count(), 10);
   assert.equal(await teacher.locator('[data-delete-lesson]').count(), 0);
-  assert.equal(await teacher.locator('#new-registration, [data-renew]').count(), 0);
+  await teacher.locator('#new-registration').waitFor();
   const seeded = await request(admin, '/registrations', 'POST', {
     name: '가상 신규회원',
     personId: pid,
@@ -826,7 +1001,7 @@ try {
   await snap(
     teacher,
     '3. 반영된 PT 회원 선택',
-    '검증용 추가 회원 자료를 관리자 API로 준비했습니다. 선생님은 회원권·결제를 다시 입력하지 않고 담당 회원을 선택합니다.',
+    '검증용 추가 회원 자료를 관리자 API로 준비했습니다. 선생님은 담당 회원을 선택하고 신규 회원이나 추가 PT 상품도 등록할 수 있습니다.',
   );
   const firstMember = (await request(admin, '/members?q=' + encodeURIComponent('가상 회원01'))).body
     .items[0];
@@ -846,7 +1021,7 @@ try {
   await snap(
     teacher,
     '4. 잔여·정산 기준 유지',
-    '다짐에서 제공된 추가 수업 기준도 같은 회원에 연결합니다. 선생님 화면에는 추가 결제 입력 동선이 없습니다.',
+    '다짐에서 제공된 추가 수업 기준도 같은 회원에 연결합니다. 선생님도 기존 회원 안에 추가 상품을 등록할 수 있습니다.',
   );
   if (firebaseMode) {
     const beforeMember = (await request(teacher, '/members?q=' + encodeURIComponent('가상 회원01')))
@@ -1118,6 +1293,8 @@ try {
   if (reportMode)
     await teacher.screenshot({ path: path.join(out, 'trainer-home-final.png'), fullPage: false });
   assert.equal(errors.length, 0, errors.join('\n'));
+  if (firebaseMode && process.argv.includes('--member-registration'))
+    await memberRegistrationScenario(admin, teacher, pid);
   if (firebaseMode && process.argv.includes('--contract-terms'))
     await contractTermsScenario(admin, teacher, pid);
   if (firebaseMode && process.argv.includes('--no-show'))
