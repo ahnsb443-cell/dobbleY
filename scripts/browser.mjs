@@ -188,6 +188,61 @@ async function request(page, route, method = 'GET', body) {
     { route, method, body },
   );
 }
+async function deleteLessonScenario(admin) {
+  const p = (
+    await request(admin, '/people', 'POST', {
+      name: '삭제 버튼 검증',
+      profile: 'standard',
+      hireMonth: '2026-01',
+    })
+  ).body;
+  const seeded = await request(admin, '/registrations', 'POST', {
+    name: '삭제 검증 회원',
+    personId: p.id,
+    paidDate: '2026-11-01',
+    amount: 0,
+    quantity: 10,
+    category: 'pt',
+    saleType: 'new',
+    carryUsed: 3,
+    fixedFee: 20000,
+  });
+  assert.equal(seeded.status, 200);
+  const member = seeded.body.member,
+    contract = seeded.body.contract;
+  const recorded = await request(admin, '/lessons', 'POST', {
+    contractId: contract.id,
+    date: '2026-11-01',
+    time: '10:00',
+  });
+  assert.equal(recorded.status, 200);
+  assert.equal((await request(admin, '/members/' + member.id)).body.contracts[0].remaining, 6);
+  assert.equal(
+    (await request(admin, '/payroll/' + p.id + '?month=2026-11')).body.commission,
+    20000,
+  );
+  await admin.locator('#month').fill('2026-11');
+  await admin.locator('#month').dispatchEvent('change');
+  await navigate(admin, 'lessons');
+  await admin.locator('[data-delete-lesson="' + recorded.body.id + '"]').click();
+  await admin.locator('[name=reason]').fill('중복 기록 삭제 검증');
+  await clickSubmit(admin);
+  await closed(admin);
+  assert.equal(await admin.locator('[data-delete-lesson="' + recorded.body.id + '"]').count(), 0);
+  assert.ok(
+    (
+      await admin
+        .locator('tr')
+        .filter({ has: admin.locator('[data-history="' + recorded.body.id + '"]') })
+        .innerText()
+    ).includes('삭제 · 정산 제외'),
+  );
+  assert.equal((await request(admin, '/members/' + member.id)).body.contracts[0].remaining, 7);
+  assert.equal((await request(admin, '/payroll/' + p.id + '?month=2026-11')).body.commission, 0);
+  console.log(
+    'PASS: admin delete button restores remaining and removes payroll, keeping history visible.',
+  );
+}
 async function fixedFeeScenario(admin) {
   const month = '2026-09';
   const person = (
@@ -553,6 +608,7 @@ try {
   await teacher.waitForSelector('.member-card');
   assert.equal(await teacher.locator('[data-view=people]').count(), 0);
   assert.equal(await teacher.locator('.member-card').count(), 10);
+  assert.equal(await teacher.locator('[data-delete-lesson]').count(), 0);
   assert.equal(await teacher.locator('#new-registration, [data-renew]').count(), 0);
   const seeded = await request(admin, '/registrations', 'POST', {
     name: '가상 신규회원',
@@ -830,6 +886,7 @@ try {
   if (reportMode)
     await teacher.screenshot({ path: path.join(out, 'trainer-home-final.png'), fullPage: false });
   assert.equal(errors.length, 0, errors.join('\n'));
+  if (firebaseMode && process.argv.includes('--delete-lesson')) await deleteLessonScenario(admin);
   if (firebaseMode && process.argv.includes('--fixed-fee')) await fixedFeeScenario(admin);
   if (firebaseMode && process.argv.includes('--classes')) await extendedScenario(admin, browser);
   assert.deepEqual(errors, []);

@@ -254,3 +254,25 @@ export async function duetDetail(s, a, key) {
   }
   return { ...row, lessons };
 }
+
+export async function deleteLesson(s, a, key, b) {
+  admin(a);
+  const lesson = await owned(s, a, 'lessons', key);
+  version(lesson, b.version);
+  const reason = text(b.reason, '삭제 사유', 200);
+  let lessonIds;
+  if (lesson.session_id) {
+    const session = await owned(s, a, 'duet_sessions', lesson.session_id);
+    await changeDuet(s, a, session.id, { version: session.version, void: true, reason });
+    lessonIds = session.lesson_ids;
+  } else {
+    await changeLesson(s, a, key, { version: lesson.version, void: true, reason });
+    lessonIds = [key];
+  }
+  await s.audit(a, 'lesson-delete', 'lesson', key, reason, {
+    lessonIds,
+    restoredSessions: lessonIds.length,
+    signatureOriginalsPreserved: true,
+  });
+  return { deleted: true, restoredSessions: lessonIds.length, lessonIds };
+}

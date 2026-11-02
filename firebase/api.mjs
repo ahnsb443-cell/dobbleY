@@ -189,6 +189,8 @@ export function createFirebaseApi(
       if (!key && method === 'GET') return d.listLessons(s, a, url);
       if (!key && method === 'POST') return d.addLesson(s, a, b);
       if (key && method === 'PATCH') return d.changeLesson(s, a, key, b);
+      if (key && path.length === 3 && method === 'DELETE')
+        return classes.deleteLesson(s, a, key, b);
       if (path[3] === 'signatures' && method === 'GET') {
         const l = await d.owned(s, a, 'lessons', key),
           items = await s.query('signatures', [['lesson_id', '==', key]], {

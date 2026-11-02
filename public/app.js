@@ -1542,20 +1542,31 @@ function lessonsContent() {
           '</td><td>' +
           esc(l.instructor) +
           '</td><td>' +
-          (l.status === 'void' ? '취소' : '진행') +
-          '</td><td><button class="signature-status ' +
-          l.confirmation.state +
-          '" data-sign="' +
+          (l.status === 'void' ? '삭제 · 정산 제외' : '진행') +
+          '</td><td>' +
+          (l.status === 'void'
+            ? '정산 제외'
+            : '<button class="signature-status ' +
+              l.confirmation.state +
+              '" data-sign="' +
+              l.id +
+              '">' +
+              { unsigned: '회원 서명받기', signed: '✓ 서명 완료', stale: '재서명 필요' }[
+                l.confirmation.state
+              ] +
+              '</button>') +
+          '</td><td><button class="text-button" data-history="' +
           l.id +
-          '">' +
-          { unsigned: '회원 서명받기', signed: '✓ 서명 완료', stale: '재서명 필요' }[
-            l.confirmation.state
-          ] +
-          '</button></td><td><button class="text-button" data-history="' +
-          l.id +
-          '">이력</button> <button class="text-button" data-edit-lesson="' +
-          l.id +
-          '">정정</button></td></tr>',
+          '">이력</button>' +
+          (l.status === 'active'
+            ? ' <button class="text-button" data-edit-lesson="' + l.id + '">정정</button>'
+            : '') +
+          (extendedLessons && isAdmin() && l.status === 'active'
+            ? ' <button class="text-button danger-text" data-delete-lesson="' +
+              l.id +
+              '">삭제</button>'
+            : '') +
+          '</td></tr>',
       ),
     ) +
     (!(data.items || []).length
@@ -2744,6 +2755,37 @@ function bindPage() {
   document
     .querySelectorAll('[data-history]')
     .forEach((b) => (b.onclick = () => act(() => showHistory(b.dataset.history))));
+  document.querySelectorAll('[data-delete-lesson]').forEach((button) => {
+    button.onclick = () => {
+      const l = data.items.find((l) => l.id === button.dataset.deleteLesson);
+      modal(
+        '수업 삭제 · 잔여 복구',
+        '<p><b>' +
+          esc(l.member) +
+          '</b> · ' +
+          l.date +
+          ' ' +
+          esc(l.time) +
+          '</p>' +
+          '<p class="form-note">' +
+          (l.session_id
+            ? '듀엣은 두 회원의 수업을 함께 삭제하고 각 회원의 잔여 1회를 복구합니다.'
+            : '이 수업을 정산에서 제외하고 잔여 1회를 복구합니다.') +
+          ' 서명 원본·삭제 이력은 보존됩니다. 뒤 회차 서명은 재확인이 필요할 수 있습니다. 제출·승인된 정산은 먼저 반려하고, 마감된 월은 마감을 해제해야 합니다.</p>' +
+          field('삭제 사유', 'reason', 'text', '', 'maxlength="200"'),
+        async (f, key) => {
+          await api('/lessons/' + l.id, {
+            method: 'DELETE',
+            key,
+            body: { version: l.version, reason: f.get('reason') },
+          });
+          await load();
+          toast('수업을 정산에서 제외하고 잔여횟수를 복구했습니다.');
+        },
+        '삭제 · 잔여 복구',
+      );
+    };
+  });
   document.querySelectorAll('[data-edit-lesson]').forEach(
     (b) =>
       (b.onclick = () => {

@@ -729,3 +729,145 @@ test(
     );
   },
 );
+
+test(
+  '관리자 수업 삭제: 서명 원본 보존·잔여/정산 복구·듀엣 원자 처리·확정 보호',
+  { skip: !enabled, timeout: 120000 },
+  async (t) => {
+    t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-30T09:00:00Z') });
+    const svc = services('demo-delete-' + randomBytes(4).toString('hex'));
+    const a = { id: 'admin', role: 'admin', display_name: '관리자 삭제 검증' };
+    const run = (fn) => atomic(svc.db, fn),
+      read = () => new Store(svc.db);
+    const p = await run((s) =>
+      d.addPerson(s, a, { name: '삭제 검증 선생님', profile: 'standard', hireMonth: '2026-01' }),
+    );
+    const employee = { id: 'employee', role: 'employee', person_id: p.id };
+    const contract = async (carryUsed = 0) =>
+      run(async (s) => {
+        const m = await d.addMember(s, a, { name: randomBytes(5).toString('hex'), personId: p.id });
+        return d.addContract(s, a, {
+          memberId: m.id,
+          paidDate: '2026-11-01',
+          amount: 0,
+          quantity: 10,
+          category: 'pt',
+          saleType: 'new',
+          carryUsed,
+          fixedFee: 20000,
+        });
+      });
+    const ticket = await contract(3);
+    const first = await run((s) =>
+      d.addLesson(s, employee, { contractId: ticket.id, date: '2026-11-01', time: '10:00' }),
+    );
+    const later = await run((s) =>
+      d.addLesson(s, employee, { contractId: ticket.id, date: '2026-11-02', time: '10:00' }),
+    );
+    const sign = async (l) =>
+      run(async (s) =>
+        d.signLesson(s, employee, l.id, {
+          version: l.version,
+          snapshot: await d.snapshot(s, l.id),
+          confirmed: true,
+          strokes,
+        }),
+      );
+    const sig1 = await sign(first),
+      sig2 = await sign(later);
+    const payload = await read().get('signature_payloads', sig1.id);
+    assert.equal((await d.progress(read(), ticket)).remaining, 5);
+    assert.equal((await d.calculate(read(), p, '2026-11')).commission, 40000);
+    await assert.rejects(
+      run((s) => c.deleteLesson(s, employee, first.id, { version: 1, reason: '직원 요청' })),
+      (e) => e.status === 403,
+    );
+    await assert.rejects(
+      run((s) => c.deleteLesson(s, a, first.id, { version: 99, reason: '이전 화면' })),
+      (e) => e.status === 409,
+    );
+    await assert.rejects(
+      run((s) => c.deleteLesson(s, a, first.id, { version: 1, reason: '' })),
+      /사유/,
+    );
+    assert.equal(
+      (await run((s) => c.deleteLesson(s, a, first.id, { version: 1, reason: '중복 수업 삭제' })))
+        .restoredSessions,
+      1,
+    );
+    assert.equal((await read().get('lessons', first.id)).status, 'void');
+    assert.equal((await d.progress(read(), ticket)).remaining, 6);
+    assert.equal((await d.calculate(read(), p, '2026-11')).commission, 20000);
+    assert.deepEqual(await read().get('signature_payloads', sig1.id), payload);
+    assert.ok(await read().get('signatures', sig1.id));
+    assert.ok(await read().get('signatures', sig2.id));
+    assert.equal(
+      (await d.confirmation(read(), await read().get('lessons', later.id))).state,
+      'stale',
+    );
+    await assert.rejects(
+      run((s) => c.deleteLesson(s, a, first.id, { version: 2, reason: '다시 삭제' })),
+      /취소/,
+    );
+    assert.equal((await d.progress(read(), ticket)).remaining, 6);
+    const left = await contract(),
+      right = await contract();
+    const duet = await run((s) =>
+      c.addDuet(s, employee, {
+        contractIds: [left.id, right.id],
+        date: '2026-11-03',
+        time: '10:00',
+      }),
+    );
+    assert.equal((await d.progress(read(), left)).remaining, 9);
+    assert.equal((await d.calculate(read(), p, '2026-11')).commission, 60000);
+    assert.equal(
+      (
+        await run((s) =>
+          c.deleteLesson(s, a, duet.lesson_ids[0], { version: 1, reason: '듀엣 중복 삭제' }),
+        )
+      ).restoredSessions,
+      2,
+    );
+    assert.equal((await d.progress(read(), left)).remaining, 10);
+    assert.equal((await d.progress(read(), right)).remaining, 10);
+    assert.equal((await read().get('duet_sessions', duet.id)).status, 'void');
+    for (const id of duet.lesson_ids)
+      assert.equal((await read().get('lessons', id)).status, 'void');
+    assert.equal((await d.calculate(read(), p, '2026-11')).commission, 20000);
+    const deletion = { version: 1, reason: '정산 후 삭제 시도' };
+    await run((s) =>
+      w.payrollAction(s, employee, p.id, '2026-11', { action: 'submit', version: 0 }),
+    );
+    await assert.rejects(
+      run((s) => c.deleteLesson(s, a, later.id, deletion)),
+      (e) => e.status === 409,
+    );
+    await run((s) =>
+      w.payrollAction(s, a, p.id, '2026-11', { action: 'return', version: 1, note: '검증 반려' }),
+    );
+    await run((s) =>
+      w.payrollAction(s, employee, p.id, '2026-11', { action: 'submit', version: 2 }),
+    );
+    await run((s) =>
+      w.payrollAction(s, a, p.id, '2026-11', {
+        action: 'approve',
+        version: 3,
+        note: '재서명 확인 예외 승인 검증',
+      }),
+    );
+    const frozen = await d.result(read(), a, p.id, '2026-11');
+    await assert.rejects(
+      run((s) => c.deleteLesson(s, a, later.id, deletion)),
+      (e) => e.status === 409,
+    );
+    assert.deepEqual(await d.result(read(), a, p.id, '2026-11'), frozen);
+    await run((s) => s.put('periods', '2026-11', { state: 'closed' }));
+    await assert.rejects(
+      run((s) => c.deleteLesson(s, a, later.id, deletion)),
+      /마감/,
+    );
+    assert.equal((await d.progress(read(), ticket)).remaining, 6);
+    assert.equal((await read().query('audit', [['action', '==', 'lesson-delete']])).length, 2);
+  },
+);

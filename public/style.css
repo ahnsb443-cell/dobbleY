@@ -3229,3 +3229,6 @@ body.menu-open {
 .trainer-recent .recent-person b {
   display: inline;
 }
+.danger-text {
+  color: #c62828;
+}
