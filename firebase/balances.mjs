@@ -1,5 +1,14 @@
-import { id, day, integer, text, digest, fail } from '../lib/utils.mjs';
-import { admin, trainer, required, guard, now } from './domain.mjs';
+import { id, day, integer, text, digest, fail, version } from '../lib/utils.mjs';
+import {
+  admin,
+  trainer,
+  required,
+  guard,
+  now,
+  contractLessons,
+  progress,
+  confirmation,
+} from './domain.mjs';
 
 // Opening balances are not new sales. Unknown historical dates remain unknown.
 export async function importBalances(s, a, b) {
@@ -142,4 +151,53 @@ export async function importBalances(s, a, b) {
     contracts++;
   }
   return { members, contracts, duplicates };
+}
+
+// Correct an imported balance without creating fictional lessons, signatures, or sales.
+export async function reconcileOpeningBalance(s, a, key, b) {
+  admin(a);
+  const c = await required(s, 'contracts', key);
+  if (!c.migration_baseline) fail(409, '기초잔여로 이관한 상품만 정정할 수 있습니다.');
+  version(c, b.version);
+  const asOf = day(b.asOf),
+    reason = text(b.reason, '정정 사유', 500);
+  const quantity = integer(b.quantity, '등록 횟수', 1, 10000),
+    remaining = integer(b.remaining, '잔여 횟수', 0, quantity);
+  const lessons = await contractLessons(s, key);
+  const carryUsed = quantity - remaining - lessons.length;
+  if (carryUsed < 0)
+    fail(409, '기존 수업 기록과 잔여 횟수가 맞지 않습니다. 수업을 덮어쓰지 않고 먼저 확인하세요.');
+  for (const m of new Set([asOf.slice(0, 7), ...lessons.map((l) => l.month)]))
+    await guard(s, m, c.person_id);
+  const before = await progress(s, c);
+  if (c.quantity === quantity && c.carry_used === carryUsed)
+    return { changed: false, before: before.remaining, remaining: before.remaining };
+  const next = {
+    ...c,
+    quantity,
+    carry_used: carryUsed,
+    version: c.version + 1,
+    balance_corrected_at: now(),
+    balance_corrected_as_of: asOf,
+  };
+  await s.put('contracts', key, next);
+  const after = await progress(s, next);
+  if (after.remaining !== remaining) fail(409, '잔여 정정 검증에 실패했습니다.');
+  await s.audit(a, 'balance-correct', 'contract', key, reason, {
+    asOf,
+    before: { quantity: c.quantity, carryUsed: c.carry_used, remaining: before.remaining },
+    after: { quantity, carryUsed, remaining },
+    preservedLessons: lessons.length,
+  });
+  let signaturesNeedReview = 0;
+  for (const l of lessons) if ((await confirmation(s, l)).state === 'stale') signaturesNeedReview++;
+  return {
+    changed: true,
+    before: before.remaining,
+    remaining,
+    quantity,
+    carryUsed,
+    preservedLessons: lessons.length,
+    signaturesNeedReview,
+  };
 }

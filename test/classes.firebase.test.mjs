@@ -1307,3 +1307,103 @@ test(
     );
   },
 );
+
+test(
+  '기초잔여 정정은 실제 서명 수업을 이중 차감하지 않고 원본·단가·확정 보호 유지',
+  { skip: !enabled, timeout: 120000 },
+  async () => {
+    const { importBalances, reconcileOpeningBalance } = await import('../firebase/balances.mjs');
+    const svc = services('demo-balance-fix-' + randomBytes(4).toString('hex')),
+      a = { id: 'admin', role: 'admin' },
+      run = (fn) => atomic(svc.db, fn),
+      read = () => new Store(svc.db);
+    const p = await run((s) =>
+      d.addPerson(s, a, { name: '잔여 정정 강사', profile: 'standard', hireMonth: '2026-10' }),
+    );
+    await run((s) =>
+      importBalances(s, a, {
+        asOf: '2026-11-02',
+        batch: 'balance-fix-test',
+        rows: [
+          {
+            row: 1,
+            name: '잔여 정정 회원',
+            instructor: p.name,
+            category: 'pt',
+            quantity: 24,
+            remaining: 19,
+            gross: 2640000,
+          },
+        ],
+      }),
+    );
+    const contract = (await read().query('contracts'))[0];
+    const l = await run((s) =>
+      d.addLesson(s, a, { contractId: contract.id, date: '2026-11-02', time: '10:00' }),
+    );
+    const snap = await d.snapshot(read(), l.id);
+    assert.equal(snap.ordinal, 6);
+    const sig = await run((s) =>
+      d.signLesson(s, a, l.id, { version: 1, snapshot: snap, confirmed: true, strokes }),
+    );
+    const payload = await read().get('signature_payloads', sig.id);
+    const commission = (await d.calculate(read(), p, '2026-11')).commission;
+    const fixed = await run((s) =>
+      reconcileOpeningBalance(s, a, contract.id, {
+        version: 1,
+        asOf: '2026-11-02',
+        quantity: 24,
+        remaining: 19,
+        reason: '10월 4회+이번 달 실제 1회 중복 차감 해소',
+      }),
+    );
+    assert.equal(fixed.remaining, 19);
+    assert.equal(fixed.carryUsed, 4);
+    assert.equal(fixed.preservedLessons, 1);
+    assert.equal(fixed.signaturesNeedReview, 1);
+    const next = await read().get('contracts', contract.id);
+    assert.equal(next.amount, contract.amount);
+    assert.equal(next.fixed_fee, contract.fixed_fee);
+    assert.equal(next.version, 2);
+    assert.equal((await read().query('lessons')).length, 1);
+    assert.equal((await read().query('sales')).length, 0);
+    assert.deepEqual(await read().get('signature_payloads', sig.id), payload);
+    assert.equal((await d.snapshot(read(), l.id)).ordinal, 5);
+    assert.equal((await d.calculate(read(), p, '2026-11')).commission, commission);
+    const repeat = await run((s) =>
+      reconcileOpeningBalance(s, a, contract.id, {
+        version: 2,
+        asOf: '2026-11-02',
+        quantity: 24,
+        remaining: 19,
+        reason: '반영 확인',
+      }),
+    );
+    assert.equal(repeat.changed, false);
+    await assert.rejects(
+      run((s) =>
+        reconcileOpeningBalance(s, a, contract.id, {
+          version: 2,
+          asOf: '2026-11-02',
+          quantity: 24,
+          remaining: 24,
+          reason: '기존 수업 지우지 않음',
+        }),
+      ),
+      (e) => e.status === 409,
+    );
+    await run((s) => s.put('periods', '2026-11', { month: '2026-11', state: 'closed' }));
+    await assert.rejects(
+      run((s) =>
+        reconcileOpeningBalance(s, a, contract.id, {
+          version: 2,
+          asOf: '2026-11-02',
+          quantity: 24,
+          remaining: 18,
+          reason: '마감 보호',
+        }),
+      ),
+      (e) => e.status === 409,
+    );
+  },
+);
