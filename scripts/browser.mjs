@@ -203,6 +203,75 @@ async function request(page, route, method = 'GET', body) {
     { route, method, body },
   );
 }
+async function managerRecordScenario(admin) {
+  assert.equal((await request(admin, '/me')).body.user.role, 'admin');
+  const manager = (
+    await request(admin, '/people', 'POST', {
+      name: '총괄 수업 검증',
+      profile: 'manager',
+      hireMonth: '2026-01',
+    })
+  ).body;
+  const reg = await request(admin, '/registrations', 'POST', {
+    name: '총괄 수업 회원',
+    personId: manager.id,
+    paidDate: '2026-11-01',
+    startDate: '2026-11-01',
+    amount: 1100000,
+    vatIncluded: true,
+    quantity: 10,
+    category: 'pt',
+    saleType: 'new',
+  });
+  assert.equal(reg.status, 200);
+  await admin.reload();
+  await admin.locator('#quick-record').waitFor();
+  await admin.setViewportSize({ width: 390, height: 844 });
+  await admin.locator('#month').fill('2026-11');
+  await admin.locator('#month').dispatchEvent('change');
+  async function open() {
+    await admin.locator('#quick-record').click();
+    await admin.locator('[name=quickPersonId]').waitFor();
+    assert.equal(await admin.locator('[name=quickPersonId]').inputValue(), manager.id);
+    await admin.locator('#quick-member-search').fill('총괄 수업 회원');
+    await admin.locator('[data-quick-member="' + reg.body.member.id + '"]').click();
+    await admin.locator('[name=date]').fill('2026-11-01');
+    await admin.locator('[name=time]').fill('18:00');
+    await clickSubmit(admin);
+    await admin.locator('#sign-pad').waitFor();
+  }
+  await open();
+  await returnTeacher(admin);
+  assert.equal(
+    (await request(admin, '/members/' + reg.body.member.id)).body.contracts[0].remaining,
+    10,
+  );
+  assert.equal(
+    (await request(admin, '/payroll/' + manager.id + '?month=2026-11')).body.commission,
+    0,
+  );
+  await open();
+  await admin.locator('#confirm-sign').check();
+  await draw(admin, admin.context());
+  await admin.locator('#save-sign').click();
+  await admin.waitForFunction(() =>
+    document.querySelector('.member-intro')?.textContent.includes('저장 완료'),
+  );
+  await admin.waitForFunction(() => document.querySelector('#member-screen').hidden);
+  await admin.locator('#quick-record').waitFor();
+  assert.equal((await request(admin, '/me')).body.user.role, 'admin');
+  const pay = (await request(admin, '/payroll/' + manager.id + '?month=2026-11')).body;
+  assert.equal(pay.rate, 50);
+  assert.equal(pay.commission, 50000);
+  assert.equal(
+    (await request(admin, '/members/' + reg.body.member.id)).body.contracts[0].remaining,
+    9,
+  );
+  await admin.setViewportSize({ width: 1440, height: 1000 });
+  console.log(
+    'PASS: unlinked administrator selects manager, exits unsaved without effects, saves a member signature at 50% and automatically returns with admin rights intact.',
+  );
+}
 async function memberRegistrationScenario(admin, teacher, pid) {
   await teacher.locator('#month').fill('2026-11');
   await teacher.locator('#month').dispatchEvent('change');
@@ -1337,6 +1406,7 @@ try {
   if (reportMode)
     await teacher.screenshot({ path: path.join(out, 'trainer-home-final.png'), fullPage: false });
   assert.equal(errors.length, 0, errors.join('\n'));
+  if (firebaseMode && process.argv.includes('--manager-record')) await managerRecordScenario(admin);
   if (firebaseMode && process.argv.includes('--member-registration'))
     await memberRegistrationScenario(admin, teacher, pid);
   if (firebaseMode && process.argv.includes('--contract-terms'))

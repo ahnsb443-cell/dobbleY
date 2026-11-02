@@ -445,9 +445,9 @@ function dashboardContent() {
       ? '확인이 필요한 기록을 먼저 살펴보세요.'
       : '수업을 기록하고 회원님께 바로 서명받으세요.') +
     '</p></div><button class="primary hero-action" id="' +
-    (isAdmin() ? 'dashboard-reconcile' : 'quick-record') +
+    'quick-record' +
     '">' +
-    (isAdmin() ? icon('source') + '다짐 기록 대조' : '+ 수업 기록 · 서명받기') +
+    '+ 수업 체크 · 서명받기' +
     '</button></section>' +
     '<div class="stats home-stats ' +
     (isAdmin() ? 'three' : 'two') +
@@ -464,7 +464,7 @@ function dashboardContent() {
       '<div class="class-shortcuts"><button class="secondary" id="quick-duet">듀엣 수업 기록</button><button class="secondary" data-view="groups">그룹레슨 · 시간급</button></div>';
   if (extendedLessons && isAdmin())
     html +=
-      '<div class="class-shortcuts"><button class="primary" id="membership-record">당월 멤버십 총매출</button><button class="secondary" data-view="sales">센터 매출 현황</button></div>';
+      '<div class="class-shortcuts"><button class="secondary" id="dashboard-reconcile">다짐 기록 대조</button><button class="primary" id="membership-record">당월 멤버십 총매출</button><button class="secondary" data-view="sales">센터 매출 현황</button></div>';
   if (isAdmin()) {
     html +=
       '<section class="panel priority-panel"><div class="panel-head"><div><h3>먼저 확인할 항목</h3><p>각 항목을 누르면 해당 기록으로 이동합니다.</p></div></div>' +
@@ -577,9 +577,35 @@ function dashboardContent() {
 }
 async function quickRecordForm() {
   let searchSequence = 0;
+  const trainers = people.filter(
+    (p) =>
+      !['fc', 'staff', 'part', 'daily', 'group', 'representative'].includes(p.profile) &&
+      (!p.end_date || p.end_date >= today()),
+  );
+  const managers = trainers.filter((p) => p.profile === 'manager');
+  const defaultTeacher =
+    trainers.find((p) => p.id === user.personId)?.id ||
+    (managers.length === 1 ? managers[0].id : '');
   modal(
     '수업을 진행한 회원 선택',
-    '<label class="field">회원 이름<input id="quick-member-search" type="search" placeholder="이름으로 빠르게 찾기" autocomplete="off"></label><div id="quick-member-results" class="quick-member-results" aria-live="polite"></div>',
+    (isAdmin()
+      ? '<p class="form-note">수업을 진행한 선생님을 선택한 뒤 회원을 고르세요. 관리자 권한으로 바로 서명을 받을 수 있습니다.</p>' +
+        select(
+          '담당 선생님',
+          'quickPersonId',
+          option('', '선생님을 선택하세요') +
+            trainers
+              .map((p) =>
+                option(
+                  p.id,
+                  p.name + ' · ' + (profiles[p.profile]?.name || p.profile),
+                  p.id === defaultTeacher,
+                ),
+              )
+              .join(''),
+        )
+      : '') +
+      '<label class="field">회원 이름<input id="quick-member-search" type="search" placeholder="이름으로 빠르게 찾기" autocomplete="off"></label><div id="quick-member-results" class="quick-member-results" aria-live="polite"></div>',
     () => {},
     '닫기',
     () => {
@@ -587,10 +613,20 @@ async function quickRecordForm() {
         host = $('#quick-member-results');
       let timer;
       async function search() {
+        if (!host.isConnected) return;
         const current = ++searchSequence;
+        const selectedTeacher = isAdmin() ? $('[name=quickPersonId]').value : null;
+        if (isAdmin() && !selectedTeacher) {
+          host.innerHTML = '<p class="muted">담당 선생님을 먼저 선택해주세요.</p>';
+          return;
+        }
         host.innerHTML = '<p class="muted">회원 목록을 불러오는 중입니다.</p>';
         try {
-          const r = await api('/members?limit=8&q=' + encodeURIComponent(input.value.trim()));
+          const r = await api(
+            '/members?limit=8&q=' +
+              encodeURIComponent(input.value.trim()) +
+              (selectedTeacher ? '&personId=' + encodeURIComponent(selectedTeacher) : ''),
+          );
           if (current !== searchSequence || !host.isConnected) return;
           host.innerHTML = r.items.length
             ? r.items
@@ -617,6 +653,11 @@ async function quickRecordForm() {
           if (host.isConnected) host.textContent = e.message;
         }
       }
+      if ($('[name=quickPersonId]'))
+        $('[name=quickPersonId]').onchange = () => {
+          clearTimeout(timer);
+          search();
+        };
       input.onkeydown = (e) => {
         if (e.key === 'Enter') {
           e.preventDefault();
