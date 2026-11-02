@@ -229,6 +229,9 @@ async function deleteLessonScenario(admin) {
   await clickSubmit(admin);
   await closed(admin);
   assert.equal(await admin.locator('[data-delete-lesson="' + recorded.body.id + '"]').count(), 0);
+  assert.equal(await admin.locator('[data-history="' + recorded.body.id + '"]').count(), 0);
+  await admin.locator('#toggle-deleted-lessons').click();
+  await admin.locator('[data-history="' + recorded.body.id + '"]').waitFor();
   assert.ok(
     (
       await admin

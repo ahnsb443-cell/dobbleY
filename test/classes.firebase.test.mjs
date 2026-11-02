@@ -835,6 +835,24 @@ test(
     for (const id of duet.lesson_ids)
       assert.equal((await read().get('lessons', id)).status, 'void');
     assert.equal((await d.calculate(read(), p, '2026-11')).commission, 20000);
+    const currentList = await d.listLessons(
+      read(),
+      a,
+      new URL('http://localhost/api/lessons?month=2026-11'),
+    );
+    assert.equal(currentList.items.length, 1);
+    const historyList = await d.listLessons(
+      read(),
+      a,
+      new URL('http://localhost/api/lessons?month=2026-11&includeDeleted=1'),
+    );
+    assert.equal(historyList.items.filter((l) => l.status === 'void').length, 3);
+    const privateList = await d.listLessons(
+      read(),
+      employee,
+      new URL('http://localhost/api/lessons?month=2026-11&includeDeleted=1'),
+    );
+    assert.equal(privateList.items.length, 1);
     const deletion = { version: 1, reason: '정산 후 삭제 시도' };
     await run((s) =>
       w.payrollAction(s, employee, p.id, '2026-11', { action: 'submit', version: 0 }),

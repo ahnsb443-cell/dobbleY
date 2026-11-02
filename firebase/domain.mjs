@@ -392,9 +392,10 @@ export async function listLessons(s, a, url) {
   const m = month(url.searchParams.get('month')),
     { after, limit } = page(url),
     pid = a.role === 'admin' ? url.searchParams.get('personId') : a.person_id;
-  let rows = (await monthRows(s, 'lessons', m, pid)).sort(
-    (a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id),
-  );
+  const includeDeleted = a.role === 'admin' && url.searchParams.get('includeDeleted') === '1';
+  let rows = (await monthRows(s, 'lessons', m, pid))
+    .filter((l) => includeDeleted || l.status === 'active')
+    .sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
   const recent = url.searchParams.get('order') === 'recent';
   if (recent)
     rows.sort(

@@ -32,6 +32,7 @@ let user = null,
   month = preferredMonth(),
   data = {},
   sequence = 0,
+  lessonsIncludeDeleted = false,
   memberState = null,
   installPrompt = null;
 const titles = {
@@ -1191,7 +1192,14 @@ async function load(extra = '') {
       r = { ...payroll, recent, reviewSummary, salesSummary };
     } else if (view === 'payroll') r = await api('/payroll?month=' + month);
     else if (view === 'members') r = await api('/members?limit=20' + extra);
-    else if (view === 'lessons') r = await api('/lessons?month=' + month + '&limit=30' + extra);
+    else if (view === 'lessons')
+      r = await api(
+        '/lessons?month=' +
+          month +
+          '&limit=30' +
+          (isAdmin() && lessonsIncludeDeleted ? '&includeDeleted=1' : '') +
+          extra,
+      );
     else if (view === 'sales')
       r = {
         ...(await api('/sales?month=' + month + extra)),
@@ -1519,6 +1527,11 @@ function membersContent() {
 function lessonsContent() {
   return (
     '<section class="panel"><div class="panel-head"><div><h3>수업 기록 · 서명 확인</h3><p>날짜와 회차는 구분됩니다. 미서명·재서명은 정산 승인 전 확인하세요.</p></div><div class="actions">' +
+    (extendedLessons && isAdmin()
+      ? '<button class="secondary" id="toggle-deleted-lessons">' +
+        (lessonsIncludeDeleted ? '현재 수업만 보기' : '삭제 이력 보기') +
+        '</button>'
+      : '') +
     (extendedLessons
       ? '<button class="secondary" id="new-duet">듀엣 기록</button><button class="secondary" data-view="groups">그룹레슨</button>'
       : '') +
@@ -2737,6 +2750,10 @@ function bindPage() {
   document
     .querySelectorAll('[data-complete]')
     .forEach((b) => (b.onclick = () => act(() => completeForm(b.dataset.complete))));
+  on('#toggle-deleted-lessons', async () => {
+    lessonsIncludeDeleted = !lessonsIncludeDeleted;
+    await load();
+  });
   on('#go-members', async () => {
     view = 'members';
     await load();
