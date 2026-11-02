@@ -1,6 +1,7 @@
 import { id, fail, text, day, month, integer, today, version, digest } from '../lib/utils.mjs';
 import {
   required,
+  termsAt,
   person,
   owned,
   guard,
@@ -46,10 +47,38 @@ export async function settings(s, a, kind, pid, b) {
     version(old || { version: 0 }, b.version);
     const profile = b.profile || p.profile;
     if (!profiles[profile]) fail(400, '직책을 확인하세요.');
+    const previous = old || (await termsAt(s, pid, m));
+    let minimumRate = integer(
+      b.minimumRate ?? previous?.minimum_rate ?? 0,
+      '최저 보장 수업료율',
+      0,
+      100,
+    );
+    let minimumRateUntil =
+      b.minimumRateUntil === undefined
+        ? previous?.minimum_rate_until || null
+        : b.minimumRateUntil
+          ? month(b.minimumRateUntil)
+          : null;
+    if (
+      profile === 'representative' ||
+      b.minimumRate === 0 ||
+      (b.minimumRate === undefined &&
+        b.minimumRateUntil === undefined &&
+        minimumRateUntil &&
+        minimumRateUntil < m)
+    ) {
+      minimumRate = 0;
+      minimumRateUntil = null;
+    }
+    if (minimumRate > 0 && (!trainer({ profile }) || !minimumRateUntil || minimumRateUntil < m))
+      fail(400, '수업 강사의 보장 종료 월은 적용 시작 월 이후로 입력하세요.');
     const r = {
       id: key,
       person_id: pid,
       effective_month: m,
+      minimum_rate: minimumRate,
+      minimum_rate_until: minimumRate > 0 ? minimumRateUntil : null,
       profile,
       base: profile === 'representative' ? 0 : integer(b.base, '기본급'),
       tax_bps: profile === 'representative' ? 0 : integer(b.taxBps, '세율', 0, 10000),

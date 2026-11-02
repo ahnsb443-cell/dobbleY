@@ -499,6 +499,11 @@ export async function calculate(s, p, m) {
     Number(m.slice(5)) -
     Number(p.hire_month.slice(5));
   if (p.profile === 'mixed' && age >= 0 && age < 2) percent = Math.max(45, percent);
+  const minimumRate =
+    trainer(p) && terms.minimum_rate_until && m <= terms.minimum_rate_until
+      ? terms.minimum_rate || 0
+      : 0;
+  percent = Math.max(percent, minimumRate);
   const lines = [];
   const lessons = (await monthRows(s, 'lessons', m, p.id))
     .filter((l) => l.status === 'active')
@@ -572,34 +577,42 @@ export async function calculate(s, p, m) {
     incentive = Math.round(
       Math.min(center, 80000000) * 0.02 + Math.max(0, center - 80000000) * 0.04,
     );
-  if (p.profile === 'fc')
-    incentive = Math.round(
-      (membership *
-        rate(
-          [
-            [0, 0],
-            [35000000, 2],
-            [40000000, 2.5],
-            [45000000, 3],
-          ],
-          membership,
-        )) /
-        100,
-    );
-  if (p.profile === 'lead')
-    incentive = Math.round(
-      (pt *
-        rate(
-          [
-            [0, 0],
-            [30000000, 2],
-            [35000000, 2.5],
-            [40000000, 3],
-          ],
-          pt,
-        )) /
-        100,
-    );
+  const incentiveRevenue = p.profile === 'manager' ? center : p.profile === 'fc' ? membership : pt;
+  const incentiveRate =
+    p.profile === 'manager'
+      ? 2
+      : rate(
+          p.profile === 'fc'
+            ? [
+                [0, 0],
+                [35000000, 2],
+                [40000000, 2.5],
+                [45000000, 3],
+              ]
+            : [
+                [0, 0],
+                [30000000, 2],
+                [35000000, 2.5],
+                [40000000, 3],
+              ],
+          incentiveRevenue,
+        );
+  if (['fc', 'lead'].includes(p.profile))
+    incentive = Math.round((incentiveRevenue * incentiveRate) / 100);
+  const incentiveDetails = ['manager', 'fc', 'lead'].includes(p.profile)
+    ? {
+        basis:
+          p.profile === 'manager'
+            ? '센터 총매출'
+            : p.profile === 'fc'
+              ? 'FC 회원권 총매출'
+              : 'PT팀 총매출',
+        revenue: incentiveRevenue,
+        rate: incentiveRate,
+        ...(p.profile === 'manager' ? { threshold: 80000000, excessRate: 4 } : {}),
+        amount: incentive,
+      }
+    : null;
   const base =
       p.profile === 'part'
         ? Math.round(
@@ -621,6 +634,8 @@ export async function calculate(s, p, m) {
     newSales,
     renewSales,
     rate: percent,
+    minimumRate,
+    minimumRateUntil: terms.minimum_rate_until || null,
     lessons: lines.length - duets.size,
     memberSessions: lines.length,
     duetLessons: duets.size,
@@ -631,6 +646,7 @@ export async function calculate(s, p, m) {
     commission,
     bonus,
     incentive,
+    incentiveDetails,
     base,
     extra: input.extra,
     deduction: input.deduction,

@@ -210,6 +210,33 @@ function trainerHomeContent() {
     '</div>'
   );
 }
+function contractCalculationNotes(r) {
+  const notes = [];
+  if (r.minimumRate > 0)
+    notes.push(
+      esc(r.minimumRateUntil) +
+        '까지 최저 수업료율 ' +
+        r.minimumRate +
+        '% 보장 · 매출 구간이 높으면 높은 요율 적용',
+    );
+  const d = r.incentiveDetails;
+  if (d)
+    notes.push(
+      esc(d.basis) +
+        ' (VAT 제외) ' +
+        money(d.revenue) +
+        '원 · ' +
+        (d.threshold
+          ? money(d.threshold) + '원까지 ' + d.rate + '%, 초과분 ' + d.excessRate + '%'
+          : '달성 구간 ' + d.rate + '%를 매출 전액에 적용') +
+        ' · 인센티브 ' +
+        money(d.amount) +
+        '원',
+    );
+  return notes.length
+    ? '<p class="form-note contract-calculation">' + notes.join('<br>') + '</p>'
+    : '';
+}
 function trainerPayrollContent() {
   const r = (data.items || []).find((r) => r.personId === user.personId);
   if (!r) return empty('정산할 자료가 없습니다', '선택한 월의 근무 기간을 확인하세요.');
@@ -235,7 +262,9 @@ function trainerPayrollContent() {
     (r.note ? '<p class="notice">' + esc(r.note) + '</p>' : '') +
     '<section class="panel trainer-rate"><h2>적용 수업료율</h2><div class="trainer-amount">' +
     r.rate +
-    '<small>%</small></div><p class="trainer-muted">선택한 월의 매출·급여 조건 기준 · 고정 수업료는 별도 적용</p><dl class="trainer-breakdown">' +
+    '<small>%</small></div>' +
+    contractCalculationNotes(r) +
+    '<p class="trainer-muted">선택한 월의 매출·급여 조건 기준 · 고정 수업료는 별도 적용</p><dl class="trainer-breakdown">' +
     amounts
       .map(([label, amount]) => '<div><dt>' + label + '</dt><dd>' + money(amount) + '원</dd></div>')
       .join('') +
@@ -2067,7 +2096,9 @@ async function payrollDetail(key) {
       values
         .map(([k, v]) => '<div><span>' + k + '</span><b>' + money(v) + '원</b></div>')
         .join('') +
-      '</div><p class="form-note">회원 서명 확인 필요 ' +
+      '</div>' +
+      contractCalculationNotes(r) +
+      '<p class="form-note">회원 서명 확인 필요 ' +
       r.unconfirmed +
       '건. 승인 시 다짐 대조·미서명 예외가 있으면 관리자가 사유를 남겨야 합니다. 이미 승인된 금액은 저장된 명세를 조회합니다.</p>' +
       table(
@@ -2387,6 +2418,13 @@ async function compensationForm(key) {
               r.terms.tax_bps / 100,
               'min="0" max="100" step=".01"',
             ) +
+            (extendedLessons
+              ? '<label class="field">최저 보장 수업료율 (%)<input name="minimumRate" type="number" min="0" max="100" step="1" value="' +
+                (r.terms.minimum_rate_until >= month ? r.terms.minimum_rate || 0 : 0) +
+                '"></label><label class="field">보장 종료 월 (해당 월까지)<input name="minimumRateUntil" type="month" value="' +
+                esc(r.terms.minimum_rate_until >= month ? r.terms.minimum_rate_until : '') +
+                '"></label><p class="form-note">0%는 별도 보장 없음. 고정 수업료 계약은 지정 금액을 유지합니다.</p>'
+              : '') +
             field('변경 사유', 'reason') +
             '<p class="form-note">기본급·세율은 적용 월부터 이후 월에 사용합니다. 근무시간·공제는 월별 입력입니다. 마감된 월에 소급 변경할 수 없습니다.</p>',
           async (f, k) => {
@@ -2398,6 +2436,12 @@ async function compensationForm(key) {
               body: {
                 month: m,
                 version: current.exactTerms?.version || 0,
+                ...(extendedLessons
+                  ? {
+                      minimumRate: Number(f.get('minimumRate')),
+                      minimumRateUntil: f.get('minimumRateUntil'),
+                    }
+                  : {}),
                 profile: f.get('profile'),
                 base: Number(f.get('base')),
                 taxBps: Math.round(Number(f.get('tax')) * 100),

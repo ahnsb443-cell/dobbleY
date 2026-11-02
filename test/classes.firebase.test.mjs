@@ -1033,3 +1033,173 @@ test(
     );
   },
 );
+
+test(
+  '계약 기준: 기간 한정 최저 40%·고정료 독립·FC/PT 경계 구간·센터 초과분',
+  { skip: !enabled, timeout: 120000 },
+  async (t) => {
+    t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-30T09:00:00Z') });
+    const svc = services('demo-contracts-' + randomBytes(4).toString('hex')),
+      a = { id: 'admin', role: 'admin' },
+      run = (fn) => atomic(svc.db, fn),
+      read = () => new Store(svc.db);
+    const people = {};
+    for (const profile of ['standard', 'fc', 'lead', 'manager'])
+      people[profile] = await run((s) =>
+        d.addPerson(s, a, { name: profile, profile, hireMonth: '2026-10' }),
+      );
+    const teacher = people.standard;
+    await run((s) =>
+      w.settings(s, a, 'terms', teacher.id, {
+        month: '2026-11',
+        version: 0,
+        base: 1000000,
+        taxBps: 330,
+        minimumRate: 40,
+        minimumRateUntil: '2026-11',
+        reason: '11월까지 최저 40% 계약',
+      }),
+    );
+    assert.equal((await d.calculate(read(), teacher, '2026-10')).rate, 30);
+    assert.equal((await d.calculate(read(), teacher, '2026-11')).rate, 40);
+    assert.equal((await d.calculate(read(), teacher, '2026-12')).rate, 30);
+    assert.equal((await d.calculate(read(), teacher, '2026-12')).minimumRate, 0);
+    // A base pay edit from an older client preserves the existing guarantee.
+    await run((s) =>
+      w.settings(s, a, 'terms', teacher.id, {
+        month: '2026-11',
+        version: 1,
+        base: 1000001,
+        taxBps: 330,
+        reason: '기본급만 변경',
+      }),
+    );
+    assert.equal((await d.calculate(read(), teacher, '2026-11')).rate, 40);
+    await assert.rejects(
+      run((s) =>
+        w.settings(s, a, 'terms', teacher.id, {
+          month: '2026-11',
+          version: 2,
+          base: 1000000,
+          taxBps: 330,
+          minimumRate: 40,
+          minimumRateUntil: '2026-10',
+          reason: '잘못된 기간',
+        }),
+      ),
+      /종료 월/,
+    );
+    const tickets = [];
+    for (const fixedFee of [null, 20000])
+      tickets.push(
+        await run(async (s) => {
+          const member = await d.addMember(s, a, {
+            name: '검증 ' + String(fixedFee),
+            personId: teacher.id,
+          });
+          return d.addContract(s, a, {
+            memberId: member.id,
+            paidDate: '2026-11-01',
+            amount: 1100000,
+            vatIncluded: true,
+            quantity: 10,
+            category: 'pt',
+            saleType: 'new',
+            ...(fixedFee === null ? {} : { fixedFee }),
+          });
+        }),
+      );
+    for (const ticket of tickets)
+      await run((s) =>
+        d.addLesson(s, a, { contractId: ticket.id, date: '2026-11-02', time: '10:00' }),
+      );
+    const low = await d.calculate(read(), teacher, '2026-11');
+    assert.equal(low.commission, 60000);
+    assert.equal(low.minimumRate, 40);
+    const sale = {
+      id: 'boundary',
+      month: '2026-11',
+      date: '2026-11-03',
+      person_id: teacher.id,
+      category: 'pt',
+      kind: 'sale',
+      amount: 0,
+      team_pt_eligible: true,
+    };
+    await run((s) => s.put('sales', sale.id, { ...sale, amount: 4000000 }));
+    assert.equal((await d.calculate(read(), teacher, '2026-11')).rate, 45);
+    // Monthly FC totals are gross inputs, converted once to supply amounts before tier selection.
+    for (const [i, [supply, expected]] of [
+      [34999999, 0],
+      [35000000, 700000],
+      [39999999, 800000],
+      [40000000, 1000000],
+      [44999999, 1125000],
+      [45000000, 1350000],
+    ].entries()) {
+      await run((s) =>
+        w.setMembershipTotal(s, a, {
+          month: '2026-11',
+          version: i,
+          amount: supply,
+          vatIncluded: false,
+          note: 'FC 공급가 경계 검증',
+        }),
+      );
+      const result = await d.calculate(read(), people.fc, '2026-11');
+      assert.equal(result.incentive, expected);
+      assert.equal(result.incentiveDetails.revenue, supply);
+      assert.equal(result.incentiveDetails.basis, 'FC 회원권 총매출');
+    }
+    // Two 1m contract sales already exist. PT leader's own sale is included; Pilates and manager PT are excluded by the sales ledger rules.
+    for (const [supply, expected] of [
+      [29999999, 0],
+      [30000000, 600000],
+      [34999999, 700000],
+      [35000000, 875000],
+      [39999999, 1000000],
+      [40000000, 1200000],
+    ]) {
+      await run((s) => s.put('sales', sale.id, { ...sale, amount: supply - 2000000 }));
+      const result = await d.calculate(read(), people.lead, '2026-11');
+      assert.equal(result.incentive, expected);
+      assert.equal(result.incentiveDetails.revenue, supply);
+    }
+    await run((s) =>
+      w.setMembershipTotal(s, a, {
+        month: '2026-11',
+        version: 6,
+        amount: 55000000,
+        vatIncluded: true,
+        note: '부가세 포함 FC 5500만원',
+      }),
+    );
+    assert.equal((await d.calculate(read(), people.fc, '2026-11')).incentive, 1500000);
+    for (const [center, expected] of [
+      [79999999, 1600000],
+      [80000000, 1600000],
+      [80000001, 1600000],
+      [90000000, 2000000],
+    ]) {
+      await run((s) => s.put('sales', sale.id, { ...sale, amount: center - 52000000 }));
+      const result = await d.calculate(read(), people.manager, '2026-11');
+      assert.equal(result.incentive, expected);
+      assert.equal(result.incentiveDetails.revenue, center);
+    }
+    await run((s) => s.put('periods', '2026-11', { month: '2026-11', state: 'closed' }));
+    await assert.rejects(
+      run((s) =>
+        w.settings(s, a, 'terms', teacher.id, {
+          month: '2026-11',
+          version: 2,
+          base: 1000000,
+          taxBps: 330,
+          minimumRate: 40,
+          minimumRateUntil: '2026-11',
+          reason: '마감 후 변경',
+        }),
+      ),
+      /확정/,
+    );
+  },
+);

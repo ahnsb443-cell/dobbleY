@@ -193,6 +193,60 @@ async function request(page, route, method = 'GET', body) {
     { route, method, body },
   );
 }
+async function contractTermsScenario(admin, teacher, pid) {
+  const regularDecemberRate = (await request(teacher, '/payroll/' + pid + '?month=2026-12')).body
+    .rate;
+  await admin.locator('#month').fill('2026-11');
+  await admin.locator('#month').dispatchEvent('change');
+  await navigate(admin, 'people');
+  await admin.locator('[data-compensation="' + pid + '"]').click();
+  await admin.locator('#edit-base').click();
+  await admin.locator('[name=minimumRate]').fill('40');
+  await admin.locator('[name=minimumRateUntil]').fill('2026-11');
+  await admin.locator('[name=reason]').fill('11월까지 최저 40% 보장');
+  await clickSubmit(admin);
+  await closed(admin);
+  let pay = (await request(teacher, '/payroll/' + pid + '?month=2026-11')).body;
+  assert.equal(pay.rate, 40);
+  assert.equal(pay.minimumRate, 40);
+  pay = (await request(teacher, '/payroll/' + pid + '?month=2026-12')).body;
+  assert.equal(pay.rate, regularDecemberRate);
+  assert.equal(pay.minimumRate, 0);
+  await teacher.locator('#month').fill('2026-11');
+  await teacher.locator('#month').dispatchEvent('change');
+  await navigate(teacher, 'payroll');
+  await teacher.locator('.contract-calculation').waitFor();
+  assert.match(
+    await teacher.locator('.contract-calculation').innerText(),
+    /2026-11까지 최저 수업료율 40%/,
+  );
+  await teacher.locator('#month').fill('2026-12');
+  await teacher.locator('#month').dispatchEvent('change');
+  await teacher.waitForFunction(() => !document.querySelector('.contract-calculation'));
+  const fc = (
+    await request(admin, '/people', 'POST', {
+      name: '계약 FC 인센티브 검증',
+      profile: 'fc',
+      hireMonth: '2026-01',
+    })
+  ).body;
+  const r = (await request(admin, '/payroll/' + fc.id + '?month=2026-11')).body;
+  assert.equal(r.incentiveDetails.basis, 'FC 회원권 총매출');
+  await navigate(admin, 'payroll');
+  await admin
+    .locator('[data-payroll="' + fc.id + '"]')
+    .first()
+    .click();
+  await admin.locator('#modal .contract-calculation').waitFor();
+  assert.match(
+    await admin.locator('#modal .contract-calculation').innerText(),
+    /FC 회원권 총매출 \(VAT 제외\)/,
+  );
+  await admin.locator('#modal-x').click();
+  console.log(
+    'PASS: admin configures temporary 40% floor, teacher sees November guarantee and December expiry, statements show FC incentive basis.',
+  );
+}
 async function representativeScenario(admin, browser) {
   await navigate(admin, 'people');
   await admin.locator('#new-person').click();
@@ -1064,6 +1118,8 @@ try {
   if (reportMode)
     await teacher.screenshot({ path: path.join(out, 'trainer-home-final.png'), fullPage: false });
   assert.equal(errors.length, 0, errors.join('\n'));
+  if (firebaseMode && process.argv.includes('--contract-terms'))
+    await contractTermsScenario(admin, teacher, pid);
   if (firebaseMode && process.argv.includes('--no-show'))
     await noShowScenario(admin, teacher, context, pid);
   if (firebaseMode && process.argv.includes('--delete-lesson')) await deleteLessonScenario(admin);
