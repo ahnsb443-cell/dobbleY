@@ -2676,3 +2676,556 @@ body.menu-open {
     min-width: 120px;
   }
 }
+
+/* Trainer home and personal payroll: approved mobile reference. */
+.trainer-workspace .trainer-home,
+.trainer-workspace .trainer-payroll {
+  max-width: 700px;
+  margin: 0 auto;
+}
+.trainer-workspace .panel {
+  border: 1px solid #e9eaed;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 2px 9px #17212c08;
+}
+.trainer-workspace .trainer-summary,
+.trainer-workspace .trainer-rate {
+  padding: 20px;
+}
+.trainer-workspace h2 {
+  font-size: 17px;
+  letter-spacing: -0.5px;
+  margin: 0;
+  color: #111;
+}
+.trainer-workspace .trainer-amount {
+  font-size: clamp(34px, 8vw, 48px);
+  line-height: 1.2;
+  color: #ff6414;
+  font-weight: 800;
+  letter-spacing: -1.8px;
+  margin: 5px 0 0;
+  overflow-wrap: anywhere;
+}
+.trainer-amount small {
+  font-size: 0.62em;
+  letter-spacing: -1px;
+}
+.trainer-workspace .trainer-muted {
+  font-size: 13px;
+  color: #777;
+  line-height: 1.5;
+  margin: 3px 0 0;
+}
+.trainer-counts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-top: 1px solid #eee;
+  padding-top: 14px;
+  margin: 14px 0 18px;
+}
+.trainer-counts > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.trainer-counts > div + div {
+  border-left: 1px solid #eee;
+  padding-left: 24px;
+}
+.trainer-counts span {
+  font-size: 14px;
+  color: #222;
+}
+.trainer-counts b {
+  color: #111;
+  font-size: 29px;
+  line-height: 1.1;
+}
+.trainer-counts small {
+  font-size: 22px;
+}
+.trainer-workspace .primary {
+  background: #ff6414;
+  border-color: #ff6414;
+  border-radius: 12px;
+  box-shadow: none;
+}
+.trainer-summary .primary {
+  min-height: 54px;
+  font-size: 18px;
+  font-weight: 700;
+}
+.trainer-summary .primary span {
+  margin-left: 8px;
+}
+.trainer-checks {
+  padding: 16px 18px 4px;
+}
+.trainer-checks h2 {
+  padding-bottom: 10px;
+}
+.trainer-checks > button {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  border-top: 1px solid #eee;
+  padding: 11px 4px;
+  gap: 15px;
+  text-align: left;
+  color: #222;
+  font-size: 15px;
+}
+.trainer-checks b {
+  color: #ff6414;
+  margin-left: auto;
+}
+.check-symbol {
+  color: #ff6414;
+  font-size: 24px;
+  display: flex;
+  width: 28px;
+  justify-content: center;
+}
+.check-symbol .ui-icon {
+  width: 24px;
+  height: 24px;
+}
+.chevron {
+  color: #92959c;
+  font-size: 24px;
+}
+.trainer-recent {
+  padding: 16px 18px 0;
+}
+.trainer-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #eee;
+}
+.trainer-section-head .text-button {
+  font-size: 12px;
+  color: #777;
+  padding: 0;
+}
+.trainer-recent .recent-lesson {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 12px 0;
+  margin: 0;
+  border-bottom: 1px solid #eee;
+}
+.trainer-lesson-time {
+  color: #222;
+  font-size: 14px;
+  flex: 0 0 44px;
+}
+.trainer-lesson-time small {
+  display: block;
+  color: #999;
+  font-size: 10px;
+  margin-top: 3px;
+}
+.trainer-recent .recent-person {
+  min-width: 0;
+  flex: 1;
+  color: #222;
+  font-size: 13px;
+}
+.trainer-recent .recent-person b {
+  font-size: 14px;
+  font-weight: 500;
+}
+.trainer-recent .signature-status {
+  font-size: 11px;
+  white-space: nowrap;
+  padding: 5px 9px;
+  border: 0;
+  border-radius: 20px;
+  min-height: 32px;
+}
+.trainer-recent .signed {
+  background: #e2f8e6;
+  color: #12942e;
+}
+.trainer-recent .needs-sign {
+  background: #fff0da;
+  color: #f36b0a;
+}
+.trainer-workspace .panel + .panel {
+  margin-top: 12px;
+}
+.trainer-workspace .class-shortcuts {
+  margin: 14px 0;
+}
+.trainer-state {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 10px;
+}
+.trainer-state .status-chip {
+  padding: 7px 16px;
+  border-radius: 16px;
+}
+.trainer-state .draft {
+  background: #fff0da;
+  color: #fa680b;
+}
+.trainer-breakdown {
+  margin: 20px 0 12px;
+}
+.trainer-breakdown > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 12px 0;
+  font-size: 15px;
+  color: #222;
+}
+.trainer-breakdown dd {
+  margin: 0;
+  text-align: right;
+}
+.trainer-net {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  border-top: 1px solid #e7e7e7;
+  padding-top: 13px;
+}
+.trainer-net b {
+  font-size: 16px;
+}
+.trainer-net strong {
+  font-size: 25px;
+  color: #ff6414;
+  letter-spacing: -0.8px;
+}
+.trainer-net small {
+  font-size: 16px;
+}
+.trainer-groups {
+  padding: 14px 18px 8px;
+  margin-bottom: 15px;
+}
+.trainer-section-head .secondary {
+  font-size: 13px;
+  color: #ff6414;
+  border-color: #ff6414;
+  border-radius: 8px;
+  padding: 5px 9px;
+  min-height: 32px;
+}
+.trainer-groups article {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) auto;
+  gap: 9px;
+  align-items: center;
+  border-bottom: 1px solid #eee;
+  padding: 13px 0;
+  font-size: 12px;
+}
+.trainer-groups article b {
+  font-size: 13px;
+}
+.trainer-groups article small {
+  display: block;
+  margin-top: 3px;
+  font-size: 11px;
+}
+.trainer-groups article strong {
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 500;
+}
+.trainer-group-total {
+  text-align: right;
+  padding: 12px 0 5px;
+  font-size: 14px;
+  font-weight: 700;
+}
+.trainer-workspace .trainer-empty {
+  padding: 25px 0;
+  text-align: center;
+}
+.trainer-workspace .trainer-footnote {
+  margin: 12px 0 20px;
+}
+.trainer-submit {
+  margin-top: 20px;
+}
+.trainer-submit .primary {
+  min-height: 54px;
+  font-size: 17px;
+  font-weight: 700;
+}
+.trainer-back {
+  font-size: 28px;
+}
+@media (max-width: 760px) {
+  .trainer-workspace {
+    background: #fdfdfd;
+  }
+  .trainer-workspace header {
+    height: 72px;
+    padding: 0 16px;
+    gap: 5px;
+    border: 0;
+  }
+  .trainer-workspace header #refresh,
+  .trainer-workspace header .avatar,
+  .trainer-workspace .heading .eyebrow,
+  .trainer-workspace .heading p,
+  .trainer-workspace .heading h1 em,
+  .trainer-workspace footer {
+    display: none;
+  }
+  .trainer-workspace .mobile-brand {
+    gap: 7px;
+  }
+  .trainer-workspace .mobile-brand > span {
+    font-size: 15px;
+    color: #111;
+  }
+  .trainer-workspace .mobile-brand small {
+    font-size: 10px;
+    margin-top: 2px;
+  }
+  .trainer-workspace .mobile-brand .brand-logo {
+    width: 37px;
+    height: 42px;
+  }
+  .trainer-workspace .menu-toggle {
+    min-width: 24px;
+    width: 24px;
+    font-size: 16px;
+    padding: 0;
+    color: #777;
+  }
+  .trainer-workspace #logout {
+    font-size: 12px;
+    padding: 5px 0 5px 7px;
+  }
+  .trainer-workspace .content {
+    padding: 8px 13px 18px;
+  }
+  .trainer-workspace .heading {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 14px;
+  }
+  .trainer-workspace .heading > div {
+    min-width: 0;
+  }
+  .trainer-workspace .heading h1 {
+    font-size: 21px;
+    line-height: 1.3;
+    font-weight: 750;
+    color: #111;
+    margin: 0;
+    letter-spacing: -0.8px;
+  }
+  .trainer-workspace .heading input {
+    width: 138px;
+    max-width: 45%;
+    min-height: 38px;
+    padding: 5px 7px;
+    border-radius: 8px;
+    background: #fff;
+    font-size: 12px;
+  }
+  .trainer-workspace .trainer-summary,
+  .trainer-workspace .trainer-rate {
+    padding: 16px;
+  }
+  .trainer-workspace.view-payroll .heading h1 {
+    font-size: 22px;
+  }
+  .trainer-workspace.view-payroll .mobile-brand > span {
+    font-size: 0;
+  }
+  .trainer-workspace.view-payroll .mobile-brand small {
+    display: none;
+  }
+  .trainer-workspace.view-payroll .mobile-brand::after {
+    content: '내 페이롤';
+    font-size: 20px;
+    font-weight: 750;
+  }
+  .trainer-workspace.view-payroll .heading > div {
+    display: none;
+  }
+  .trainer-workspace.view-payroll .heading input {
+    max-width: none;
+    width: 150px;
+  }
+  .trainer-workspace .trainer-state {
+    margin-top: -51px;
+    margin-bottom: 16px;
+    min-height: 35px;
+    align-items: center;
+    pointer-events: none;
+  }
+  .trainer-workspace.view-payroll {
+    padding-bottom: calc(160px + env(safe-area-inset-bottom));
+  }
+  .trainer-submit {
+    position: fixed;
+    bottom: calc(72px + env(safe-area-inset-bottom));
+    left: 0;
+    right: 0;
+    padding: 10px 13px;
+    background: #ffffffed;
+    z-index: 15;
+    margin: 0;
+    border-top: 1px solid #eee;
+  }
+  .trainer-workspace + .mobile-nav {
+    height: calc(68px + env(safe-area-inset-bottom));
+    border-top: 1px solid #eee;
+    background: #fff;
+    box-shadow: none;
+  }
+  .trainer-workspace + .mobile-nav button.active {
+    color: #ff6414;
+  }
+  .trainer-workspace + .mobile-nav button.active:before {
+    background: #ff6414;
+  }
+}
+@media (max-width: 360px) {
+  .trainer-workspace .heading h1 {
+    font-size: 18px;
+  }
+  .trainer-workspace .heading input {
+    width: 128px;
+    font-size: 11px;
+  }
+  .trainer-workspace .mobile-brand > span {
+    font-size: 12px;
+  }
+  .trainer-workspace .trainer-amount {
+    font-size: 34px;
+  }
+  .trainer-breakdown > div {
+    font-size: 13px;
+  }
+  .trainer-net strong {
+    font-size: 21px;
+  }
+}
+@media (max-width: 760px) {
+  .trainer-workspace .mobile-brand .brand-logo {
+    display: none;
+  }
+  .trainer-workspace #menu-toggle {
+    width: 38px;
+    min-width: 38px;
+    height: 44px;
+  }
+  .trainer-workspace #menu-toggle .brand-logo {
+    width: 34px;
+    height: 40px;
+    object-fit: contain;
+  }
+  .trainer-workspace.view-payroll #menu-toggle,
+  .trainer-workspace.view-payroll #logout,
+  .trainer-workspace.view-payroll + .mobile-nav {
+    display: none;
+  }
+  .trainer-workspace.view-payroll {
+    padding-bottom: calc(92px + env(safe-area-inset-bottom));
+  }
+  .trainer-submit {
+    bottom: 0;
+    padding-bottom: calc(10px + env(safe-area-inset-bottom));
+  }
+}
+.trainer-workspace .panel {
+  margin-bottom: 12px;
+}
+.trainer-payroll {
+  position: relative;
+}
+.trainer-month {
+  display: inline-flex;
+  align-items: center;
+  position: relative;
+  min-height: 38px;
+  padding: 8px 12px;
+  border: 1px solid #e1e3e7;
+  border-radius: 8px;
+  background: #fff;
+  color: #111;
+  font-size: 14px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.trainer-month i {
+  font-style: normal;
+  margin-left: 12px;
+}
+.trainer-month input {
+  position: absolute;
+  inset: 0;
+  width: 100% !important;
+  max-width: none !important;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+  margin: 0;
+}
+.trainer-month:focus-within {
+  outline: 2px solid #ff6414;
+  outline-offset: 2px;
+}
+@media (max-width: 760px) {
+  .trainer-workspace .trainer-state {
+    position: absolute;
+    top: -52px;
+    right: 0;
+    margin: 0;
+    min-height: 38px;
+  }
+  .trainer-workspace.view-payroll .mobile-brand > .trainer-back {
+    font-size: 28px;
+    line-height: 1;
+    color: #111;
+  }
+  .trainer-workspace.view-payroll .mobile-brand::after {
+    color: #111;
+  }
+  .trainer-workspace.view-payroll .trainer-month {
+    min-width: 142px;
+  }
+  .trainer-workspace .trainer-month {
+    font-size: 12px;
+    padding: 8px;
+  }
+}
+@media (max-width: 760px) {
+  .trainer-workspace:not(.view-payroll) + .mobile-nav {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: stretch;
+  }
+  .trainer-workspace + .mobile-nav button {
+    width: auto;
+    flex: 1 1 0;
+  }
+}
+.trainer-recent .recent-person b {
+  display: inline;
+}

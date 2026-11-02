@@ -11,6 +11,7 @@ import {
   confirmation,
 } from './domain.mjs';
 export { importHeader };
+export const fixedFeeImportHeader = importHeader + '\t고정수업료';
 const norm = (s) =>
   String(s || '')
     .normalize('NFC')
@@ -34,12 +35,14 @@ export async function memberPreview(s, a, b) {
     heads = importHeader.split('\t');
   if (!lines.length || heads.some((h, i) => lines[0][i]?.trim() !== h))
     fail(400, '제공된 열 제목을 그대로 사용하세요.');
+  const hasFixedFee = lines[0].length === 11 && lines[0][10]?.trim() === '고정수업료';
+  if (lines[0].length !== 10 && !hasFixedFee) fail(400, '추가 열은 고정수업료만 지원합니다.');
   if (lines.length > 41) fail(400, 'Firebase 일괄 이관은 한 번에 40건 이하로 나눠주세요.');
   const people = await s.query('people');
   for (let i = 1; i < lines.length; i++)
     try {
       const r = lines[i].map((v) => v.trim());
-      if (r.length !== 10) fail(400, '열 개수가 다릅니다.');
+      if (r.length !== (hasFixedFee ? 11 : 10)) fail(400, '열 개수가 다릅니다.');
       const ref = text(r[0], '회원번호'),
         name = text(r[1], '회원명'),
         code = text(r[3], '등록번호');
@@ -59,6 +62,8 @@ export async function memberPreview(s, a, b) {
       const amount = integer(Number(r[6]), '공급가액'),
         quantity = integer(Number(r[7]), '횟수', 1, 10000),
         carryUsed = integer(Number(r[8]), '기진행', 0, quantity);
+      const fixedFee =
+        !hasFixedFee || !r[10] ? null : integer(Number(r[10]), '고정 수업료', 1, 1000000);
       const m = await external(s, 'member', ref, 'members'),
         c = await external(s, 'contract', code, 'contracts');
       if (m && (m.person_id !== p[0].id || m.name !== name))
@@ -73,7 +78,8 @@ export async function memberPreview(s, a, b) {
           c.carry_used !== carryUsed ||
           c.paid_date !== paid ||
           c.start_date !== start ||
-          c.carry_date !== carryDate)
+          c.carry_date !== carryDate ||
+          (c.fixed_fee ?? null) !== fixedFee)
       )
         fail(400, '기존 등록번호의 내용이 다릅니다.');
       rows.push({
@@ -89,6 +95,7 @@ export async function memberPreview(s, a, b) {
         quantity,
         carryUsed,
         carryDate,
+        fixedFee,
         duplicate: !!c,
       });
     } catch (e) {

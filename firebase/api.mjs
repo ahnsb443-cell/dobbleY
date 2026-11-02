@@ -182,6 +182,7 @@ export function createFirebaseApi(
     }
     if (kind === 'contracts') {
       if (!key && method === 'POST') return d.addContract(s, a, b);
+      if (path[3] === 'fee' && method === 'PATCH') return d.setContractFee(s, a, key, b);
       if (path[3] === 'close' && method === 'POST') return w.closeContract(s, a, key, b);
     }
     if (kind === 'lessons') {
@@ -267,7 +268,8 @@ export function createFirebaseApi(
     }
     if (kind === 'import' && key === 'members') {
       d.admin(a);
-      if (method === 'GET') return { header: imp.importHeader };
+      if (method === 'GET')
+        return { header: imp.importHeader, fixedFeeHeader: imp.fixedFeeImportHeader };
       if (method === 'POST')
         return path[3] === 'preview' ? imp.memberPreview(s, a, b) : imp.importMembers(s, a, b);
     }

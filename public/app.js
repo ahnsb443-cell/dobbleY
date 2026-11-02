@@ -105,7 +105,7 @@ function mobileNavigation() {
     : isGroupOnly() && extendedLessons
       ? [
           ['groups', '그룹레슨'],
-          ['payroll', '내 급여'],
+          ['payroll', '페이롤'],
           ['password', '비밀번호'],
         ]
       : isTrainer()
@@ -113,10 +113,10 @@ function mobileNavigation() {
             ['dashboard', '홈'],
             ['members', '회원'],
             ['lessons', '수업'],
-            ['payroll', '내 급여'],
+            ['payroll', '페이롤'],
           ]
         : [
-            ['payroll', '내 급여'],
+            ['payroll', '페이롤'],
             ['password', '비밀번호'],
           ];
   return (
@@ -143,7 +143,146 @@ function mobileNavigation() {
     '</nav>'
   );
 }
+function trainerHomeContent() {
+  const r = (data.items || []).find((r) => r.personId === user.personId);
+  if (!r) return empty('정산할 자료가 없습니다', '선택한 월의 근무 기간을 확인하세요.');
+  const recent = (data.recent?.items || []).filter((l) => l.status === 'active');
+  const todays = recent.filter((l) => l.date === today());
+  const shown = todays.length ? todays : recent;
+  const unsigned = r.currentUnconfirmed ?? r.unconfirmed ?? 0;
+  const returned = r.state === 'draft' && !!r.note;
+  return (
+    '<div class="trainer-home"><section class="panel trainer-summary"><h2>' +
+    (r.frozen ? '확정 정산금' : '예상 정산금') +
+    '</h2><div class="trainer-amount">' +
+    money(r.net) +
+    '<small>원</small></div><p class="trainer-muted">' +
+    (r.frozen ? '관리자가 승인한 확정 금액' : '월말 확정 전 예상 금액') +
+    '</p><div class="trainer-counts"><div><span>개인·듀엣</span><b>' +
+    r.lessons +
+    '<small>회</small></b></div><div><span>그룹수업</span><b>' +
+    (r.groupLessons || 0) +
+    '<small>회</small></b></div></div>' +
+    '<button class="primary wide" id="quick-record">수업 기록 · 서명받기 <span>›</span></button></section>' +
+    '<section class="panel trainer-checks"><h2>확인이 필요해요</h2><button data-view="lessons"><span class="check-symbol">' +
+    icon('lessons') +
+    '</span><span>서명 대기</span><b>' +
+    unsigned +
+    '건</b><span class="chevron">›</span></button><button data-view="payroll"><span class="check-symbol">ⓘ</span><span>수정 요청</span><b>' +
+    (returned ? 1 : 0) +
+    '건</b><span class="chevron">›</span></button></section>' +
+    '<section class="panel recent-panel trainer-recent"><div class="trainer-section-head"><h2>' +
+    (todays.length ? '오늘 수업' : '최근 수업') +
+    '</h2><button class="text-button" data-view="lessons">전체보기 ›</button></div>' +
+    (shown.length
+      ? shown
+          .map(
+            (l) =>
+              '<article class="recent-lesson"><div class="trainer-lesson-time">' +
+              esc(l.time) +
+              '<small>' +
+              l.date.slice(5).replace('-', '.') +
+              '</small></div><div class="recent-person"><b>' +
+              esc(l.member) +
+              '</b><span> · ' +
+              (l.session_id ? '듀엣' : l.category === 'pilates' ? '필라테스' : 'PT') +
+              '</span></div><button class="signature-status ' +
+              (l.confirmation.state === 'signed' ? 'signed' : 'needs-sign') +
+              '" ' +
+              (l.confirmation.state === 'signed' ? 'data-history' : 'data-sign') +
+              '="' +
+              l.id +
+              '">' +
+              { signed: '서명 완료', unsigned: '서명 대기', stale: '재서명' }[
+                l.confirmation.state
+              ] +
+              '</button></article>',
+          )
+          .join('')
+      : empty('기록된 수업이 없습니다', '수업 기록 버튼으로 첫 수업을 남겨주세요.')) +
+    '</section>' +
+    (extendedLessons
+      ? '<div class="class-shortcuts"><button class="secondary" id="quick-duet">듀엣 수업 기록</button><button class="secondary" data-view="groups">그룹수업 기록</button></div>'
+      : '') +
+    '</div>'
+  );
+}
+function trainerPayrollContent() {
+  const r = (data.items || []).find((r) => r.personId === user.personId);
+  if (!r) return empty('정산할 자료가 없습니다', '선택한 월의 근무 기간을 확인하세요.');
+  const groupLines = r.groupLines || [];
+  const amounts = [
+    ['개인·듀엣 수업료', r.commission],
+    ['그룹수업료', r.groupCommission || 0],
+    ['기본급', r.base],
+    ['추가 수당', r.extra],
+  ];
+  if (r.bonus) amounts.push(['매출 성과금', r.bonus]);
+  if (r.incentive) amounts.push(['팀·센터 성과금', r.incentive]);
+  if (r.tax) amounts.push(['원천징수', -r.tax]);
+  if (r.deduction) amounts.push(['별도 공제', -r.deduction]);
+  return (
+    '<div class="trainer-payroll"><div class="trainer-state"><span class="status-chip ' +
+    r.state +
+    '">' +
+    (r.periodClosed
+      ? '마감 완료'
+      : { draft: '작성 중', submitted: '제출 완료', approved: '승인 완료' }[r.state]) +
+    '</span></div>' +
+    (r.note ? '<p class="notice">' + esc(r.note) + '</p>' : '') +
+    '<section class="panel trainer-rate"><h2>적용 수업료율</h2><div class="trainer-amount">' +
+    r.rate +
+    '<small>%</small></div><p class="trainer-muted">선택한 월의 매출·급여 조건 기준 · 고정 수업료는 별도 적용</p><dl class="trainer-breakdown">' +
+    amounts
+      .map(([label, amount]) => '<div><dt>' + label + '</dt><dd>' + money(amount) + '원</dd></div>')
+      .join('') +
+    '</dl><div class="trainer-net"><b>' +
+    (r.frozen ? '확정 정산금' : '예상 정산금') +
+    '</b><strong>' +
+    money(r.net) +
+    '<small>원</small></strong></div></section>' +
+    '<section class="panel trainer-groups"><div class="trainer-section-head"><h2>그룹수업 진행 내역</h2>' +
+    (extendedLessons && allowed('groups')
+      ? '<button class="secondary" id="new-group-lesson">＋ 추가</button>'
+      : '') +
+    '</div>' +
+    (groupLines.length
+      ? groupLines
+          .map(
+            (g) =>
+              '<article><div><b>' +
+              g.date.slice(5).replace('-', '.') +
+              '</b><small>' +
+              esc(g.time) +
+              '</small></div><span>' +
+              esc(g.name) +
+              '<small>인정 ' +
+              g.billable_minutes +
+              '분</small></span><strong>' +
+              money(g.amount) +
+              '원</strong></article>',
+          )
+          .join('')
+      : '<p class="trainer-muted trainer-empty">아직 기록된 그룹수업이 없습니다.</p>') +
+    '<div class="trainer-group-total">총 ' +
+    (r.groupLessons || 0) +
+    '회 · ' +
+    money(r.groupCommission || 0) +
+    '원</div></section>' +
+    '<button class="secondary wide" data-payroll="' +
+    r.personId +
+    '">개인·듀엣 상세 · 서명 확인</button>' +
+    '<p class="trainer-muted trainer-footnote">서명 확인 필요 ' +
+    (r.currentUnconfirmed ?? r.unconfirmed ?? 0) +
+    '건 · 정산금은 원천징수·공제를 반영한 금액입니다.</p>' +
+    '<div class="trainer-submit"><button class="primary wide" id="trainer-open-submit">' +
+    (r.periodClosed || r.state !== 'draft' ? '제출 내역 · 명세서 확인' : '월말 확인 · 제출') +
+    '</button></div></div>'
+  );
+}
+
 function dashboardContent() {
+  if (!isAdmin()) return trainerHomeContent();
   const rows = data.items || [],
     own = rows.find((r) => r.personId === user.personId),
     total = rows.reduce(
@@ -595,7 +734,7 @@ async function duetForm() {
       select('두 번째 회원권', 'secondContract', '') +
       field('수업일', 'date', 'date', today(), 'max="' + today() + '"') +
       field('시작 시간', 'time', 'time', '10:00') +
-      '<p class="form-note">같은 선생님·같은 종목의 두 회원권을 선택합니다. 각 회원의 횟수는 1회씩 차감하고, 두 회당 단가 합계에 지급률을 곱합니다. 서명은 회원마다 받습니다.</p>',
+      '<p class="form-note">같은 선생님·같은 종목의 두 회원권을 선택합니다. 각 회원의 횟수는 1회씩 차감하고, 비율제 단가에는 지급률을 곱하고 고정 수업료는 그대로 지급합니다. 서명은 회원마다 받습니다.</p>',
     async (f, k) => {
       const r = await api('/duet-sessions', {
         method: 'POST',
@@ -1112,25 +1251,43 @@ function render() {
     esc(user.name) +
     '<small>' +
     (isAdmin() ? '관리자 · 전체 조회' : '직원 · 본인만 조회') +
-    '</small></div></div></div></aside><main class="view-' +
+    '</small></div></div></div></aside><main class="' +
+    (!isAdmin() && (isTrainer() || isGroupOnly()) ? 'trainer-workspace ' : '') +
+    'view-' +
     view +
-    '"><header><button class="menu-toggle" id="menu-toggle" aria-label="전체 메뉴 열기" aria-expanded="false">☰</button><a class="mobile-brand" href="#" data-view="' +
-    (allowed('dashboard') ? 'dashboard' : 'payroll') +
+    '"><header><button class="menu-toggle" id="menu-toggle" aria-label="전체 메뉴 열기" aria-expanded="false">' +
+    (isAdmin() ? '☰' : logo()) +
+    '</button><a class="mobile-brand" href="#" data-view="' +
+    (allowed('dashboard') ? 'dashboard' : allowed('groups') ? 'groups' : 'payroll') +
     '">' +
-    logo() +
-    '<span>DOUBLE Y<small>언주역점</small></span></a><span class="breadcrumb">워크스페이스 <i>/</i> ' +
+    (!isAdmin() && view === 'payroll' ? '<span class="trainer-back">←</span>' : logo()) +
+    '<span>DOUBLE Y GYM<small>더블와이짐 · 언주역점</small></span></a><span class="breadcrumb">워크스페이스 <i>/</i> ' +
     titles[view] +
     '</span><div><button class="text-button" data-install hidden>앱 설치</button><button class="text-button" id="refresh">새로고침</button><button class="text-button" id="logout">로그아웃</button><span class="avatar light">' +
     esc(user.name.slice(0, 1)) +
     '</span></div></header><div class="content"><div class="heading"><div><span class="eyebrow">DOUBLE Y GYM · EONJU</span><h1>' +
-    titles[view] +
+    (!isAdmin() && view === 'dashboard'
+      ? esc(user.name) + ' 선생님 👋'
+      : !isAdmin() && view === 'payroll'
+        ? '내 페이롤'
+        : titles[view]) +
     '<em>.</em></h1><p>' +
     (isAdmin()
       ? '매출과 수업, 확인 기록과 정산을 관리하세요.'
       : '내 회원의 결제·수업과 예상 급여를 확인하세요.') +
-    '</p></div><input type="month" id="month" value="' +
+    '</p></div>' +
+    (!isAdmin()
+      ? '<label class="trainer-month"><span>' +
+        Number(month.slice(0, 4)) +
+        '년 ' +
+        Number(month.slice(5)) +
+        '월 <i>⌄</i></span>'
+      : '') +
+    '<input type="month" id="month" value="' +
     month +
-    '" aria-label="정산 월"></div>' +
+    '" aria-label="정산 월">' +
+    (!isAdmin() ? '</label>' : '') +
+    '</div>' +
     content() +
     '<footer><b>DOUBLE Y <small>PAYROLL</small></b><span>기록은 안전하게 · 정산은 정확하게</span></footer></div></main>' +
     mobileNavigation();
@@ -1197,6 +1354,7 @@ function content() {
   );
 }
 function payrollContent() {
+  if (!isAdmin() && (isTrainer() || isGroupOnly())) return trainerPayrollContent();
   const rows = data.items || [],
     totals = rows.reduce(
       (x, r) => ({
@@ -1469,7 +1627,7 @@ function settingsContent() {
           '</td></tr>',
       ),
     ) +
-    '<div class="padded muted">회당 수업료 = 회원권 공급가액 ÷ 등록횟수 × 수업 월 지급률 (회당 원 단위 반올림).<br>겸용 강사 입사 월과 다음 달 최저 45%. 총괄/FC/PT팀장 성과급은 계약 기준으로 별도 계산합니다. 원천징수는 합산 세율 기준 예상치이며 별도 세금 신고 기능은 아닙니다.<br>자료는 연결된 저장소에 개별 기록으로 보관합니다. 백업·복원은 운영 안내의 검증된 명령을 사용하세요.</div></section>'
+    '<div class="padded muted">고정 수업료 회원권은 지정 금액을 회당 지급합니다. 그 외 회당 수업료 = 회원권 공급가액 ÷ 등록횟수 × 수업 월 지급률 (회당 원 단위 반올림).<br>겸용 강사 입사 월과 다음 달 최저 45%. 총괄/FC/PT팀장 성과급은 계약 기준으로 별도 계산합니다. 원천징수는 합산 세율 기준 예상치이며 별도 세금 신고 기능은 아닙니다.<br>자료는 연결된 저장소에 개별 기록으로 보관합니다. 백업·복원은 운영 안내의 검증된 명령을 사용하세요.</div></section>'
   );
 }
 const compareLabel = {
@@ -1620,6 +1778,9 @@ function registrationForm(existing = null) {
         'vatIncluded',
         option('true', 'VAT 포함 결제금액 (÷1.1)') + option('false', 'VAT 제외 공급가액'),
       ) +
+      (extendedLessons && isAdmin()
+        ? '<label class="field">고정 수업료 (회당 원, 비우면 지급률 적용)<input name="fixedFee" type="number" min="1" max="1000000" step="1" placeholder="예: 20000"></label><p class="form-note">고정 수업료는 월 매출 지급률을 곱하지 않고 회당 지급합니다. 결제금액·매출과 별개입니다.</p>'
+        : '') +
       field('등록 횟수', 'quantity', 'number', 20, 'min="1" max="10000" step="1"') +
       select('수업 종류', 'category', option('pt', 'PT') + option('pilates', '개인 필라테스')) +
       '<p class="form-note">기존 회원 추가 결제는 회원을 다시 만들지 않습니다. 이전 회원권 잔여와 새 계약의 단가·횟수를 각각 유지합니다.</p>',
@@ -1638,6 +1799,9 @@ function registrationForm(existing = null) {
           vatIncluded: f.get('vatIncluded') === 'true',
           category: f.get('category'),
           saleType: existing ? 'renew' : 'new',
+          ...(extendedLessons && isAdmin()
+            ? { fixedFee: f.get('fixedFee') ? Number(f.get('fixedFee')) : null }
+            : {}),
         },
       });
       await load();
@@ -1661,6 +1825,16 @@ async function memberContracts(key) {
           { new: '신규', renew: '추가 결제' }[c.sale_type] +
           '</td><td>' +
           money(c.amount) +
+          (extendedLessons
+            ? '<small>' +
+              (c.fixed_fee != null ? '고정 회당 ' + money(c.fixed_fee) + '원' : '월 지급률 적용') +
+              '</small>'
+            : '') +
+          (extendedLessons && isAdmin()
+            ? '<button type="button" class="text-button" data-contract-fee="' +
+              c.id +
+              '">수업료 설정</button>'
+            : '') +
           '</td><td>' +
           c.quantity +
           ' / ' +
@@ -1700,6 +1874,31 @@ async function memberContracts(key) {
             });
           }),
       );
+      document.querySelectorAll('[data-contract-fee]').forEach((button) => {
+        button.onclick = () => {
+          const c = r.contracts.find((c) => c.id === button.dataset.contractFee);
+          modal(
+            '회원권 수업료 설정',
+            '<p class="form-note">이 회원권의 전체 수업에 적용됩니다. 제출·승인·마감된 수업이 있으면 변경할 수 없습니다.</p><label class="field">회당 고정 수업료 (비우면 지급률 적용)<input name="fixedFee" type="number" min="1" max="1000000" step="1" value="' +
+              (c.fixed_fee ?? '') +
+              '"></label>' +
+              field('변경 사유', 'reason'),
+            async (f, key) => {
+              await api('/contracts/' + c.id + '/fee', {
+                method: 'PATCH',
+                key,
+                body: {
+                  version: c.version,
+                  fixedFee: f.get('fixedFee') ? Number(f.get('fixedFee')) : null,
+                  reason: f.get('reason'),
+                },
+              });
+              await load();
+              toast('회원권 수업료를 저장했습니다.');
+            },
+          );
+        };
+      });
       if ($('#transfer-member')) $('#transfer-member').onclick = () => transferForm(r.member);
     },
   );
@@ -1864,6 +2063,7 @@ async function payrollDetail(key) {
             '</small>' +
             '</td><td>' +
             money(l.unit) +
+            (l.fixedFee != null ? '<small>고정 수업료 · 지급률 미적용</small>' : '') +
             '</td><td>' +
             { signed: '완료', unsigned: '미서명', stale: '재서명' }[l.signature] +
             '</td></tr>',
@@ -2232,7 +2432,7 @@ function ruleForm() {
   );
 }
 async function bulkImport() {
-  const { header } = await api('/import/members');
+  const { header, fixedFeeHeader } = await api('/import/members');
   modal(
     '기존 회원 일괄 등록',
     (extendedLessons
@@ -2243,8 +2443,8 @@ async function bulkImport() {
         )
       : '') +
       '<p class="form-note">엑셀에서 아래 열 순서로 복사하거나 UTF-8 CSV를 붙여넣으세요. 회원번호와 등록번호는 중복 방지를 위한 고유값입니다. 공급가액 기준이며 기존 회원권은 실제 과거 결제일을 입력합니다. 11월 1일 이관 시 등록횟수는 원래 총횟수, 기진행횟수는 10월까지 사용한 횟수, 기준일은 2026-11-01로 입력합니다.</p><pre class="template">' +
-      esc(header) +
-      '</pre><label class="field">표 데이터<textarea name="text" rows="9" required placeholder="' +
+      esc(fixedFeeHeader || header) +
+      '</pre><p class="form-note">고정수업료 열은 선택입니다. 20000 입력 시 지급률과 무관하게 회당 20,000원을 지급하며, 빈칸은 기존 비율제입니다. 기존 10열 형식도 사용할 수 있습니다.</p><label class="field">표 데이터<textarea name="text" rows="9" required placeholder="' +
       esc(header) +
       '"></textarea></label>',
     async (f) => {
@@ -2265,7 +2465,7 @@ async function bulkImport() {
             ? '<p class="form-error">' + preview.errors.map(esc).join('<br>') + '</p>'
             : '') +
           table(
-            ['회원번호 / 이름', '담당', '등록번호', '공급가액', '등록/기진행', '처리'],
+            ['회원번호 / 이름', '담당', '등록번호', '공급가액 / 수업료', '등록/기진행', '처리'],
             preview.rows.map(
               (r) =>
                 '<tr><td>' +
@@ -2278,6 +2478,9 @@ async function bulkImport() {
                 esc(r.code) +
                 '</td><td>' +
                 money(r.amount) +
+                '<small>' +
+                (r.fixedFee != null ? '고정 회당 ' + money(r.fixedFee) + '원' : '월 지급률 적용') +
+                '</small>' +
                 '</td><td>' +
                 r.quantity +
                 ' / ' +
@@ -2533,6 +2736,19 @@ function bindPage() {
         await load();
       },
     );
+  });
+  on('#trainer-open-submit', () => {
+    const r = (data.items || []).find((r) => r.personId === user.personId);
+    if (!r || r.state !== 'draft' || r.periodClosed) return payrollDetail(user.personId);
+    confirmAction('월말 확인 · 제출', async (f, key) => {
+      await api('/payroll/' + user.personId, {
+        method: 'POST',
+        key,
+        body: { month, action: 'submit', version: r.version, note: f.get('note') },
+      });
+      await load();
+      toast('월말 정산을 제출했습니다.');
+    });
   });
   on('#quick-record', quickRecordForm);
   on('#quick-duet', duetForm);

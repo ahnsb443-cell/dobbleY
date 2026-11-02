@@ -461,3 +461,177 @@ test(
     );
   },
 );
+
+test(
+  '회원권 고정 수업료: 비율 독립·듀엣·이관·권한·확정 보호',
+  { skip: !enabled, timeout: 120000 },
+  async (t) => {
+    const imp = await import('../firebase/imports.mjs');
+    t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-30T09:00:00Z') });
+    const svc = services('demo-fixed-' + randomBytes(4).toString('hex'));
+    const a = { id: 'admin', role: 'admin', display_name: '검증 관리자' };
+    const run = (fn) => atomic(svc.db, fn),
+      read = () => new Store(svc.db);
+    const p = await run((s) =>
+      d.addPerson(s, a, { name: '고정 검증', profile: 'standard', hireMonth: '2026-01' }),
+    );
+    const employee = { id: 'employee', role: 'employee', person_id: p.id };
+    const add = (fixedFee, amount = 0) =>
+      run(async (s) => {
+        const member = await d.addMember(s, a, {
+          name: randomBytes(5).toString('hex'),
+          personId: p.id,
+        });
+        return d.addContract(s, a, {
+          memberId: member.id,
+          paidDate: '2026-11-01',
+          quantity: 10,
+          amount,
+          category: 'pt',
+          saleType: 'new',
+          fixedFee,
+        });
+      });
+    for (const value of [0, -1, 1.5, '20000', 1000001])
+      await assert.rejects(add(value), /고정 수업료/);
+    const fixed = await add(20000);
+    const regular = await add(null, 660000);
+    const lesson = await run((s) =>
+      d.addLesson(s, employee, { contractId: fixed.id, date: '2026-11-10', time: '10:00' }),
+    );
+    const before = await d.calculate(read(), p, '2026-11');
+    assert.equal(before.rate, 30);
+    assert.equal(before.commission, 20000);
+    assert.equal(before.lines[0].fixedFee, 20000);
+    assert.equal((await d.progress(read(), fixed)).remaining, 9);
+    await add(null, 8000000); // Changes the monthly percentage but never the fixed payment.
+    const raised = await d.calculate(read(), p, '2026-11');
+    assert.equal(raised.rate, 50);
+    assert.equal(raised.lines.find((l) => l.lessonId === lesson.id).unit, 20000);
+    const duet = await run((s) =>
+      c.addDuet(s, employee, {
+        contractIds: [fixed.id, regular.id],
+        date: '2026-11-11',
+        time: '10:00',
+      }),
+    );
+    let pay = await d.calculate(read(), p, '2026-11');
+    assert.equal(
+      pay.lines.filter((l) => l.sessionId === duet.id).reduce((n, l) => n + l.unit, 0),
+      53000,
+    );
+    const secondFixed = await add(20000);
+    const both = await run((s) =>
+      c.addDuet(s, employee, {
+        contractIds: [fixed.id, secondFixed.id],
+        date: '2026-11-12',
+        time: '10:00',
+      }),
+    );
+    pay = await d.calculate(read(), p, '2026-11');
+    assert.equal(
+      pay.lines.filter((l) => l.sessionId === both.id).reduce((n, l) => n + l.unit, 0),
+      40000,
+    );
+    assert.equal((await d.progress(read(), fixed)).remaining, 7);
+    await assert.rejects(
+      run((s) =>
+        d.setContractFee(s, employee, fixed.id, {
+          version: 1,
+          fixedFee: 30000,
+          reason: '직원 변경',
+        }),
+      ),
+      /관리자/,
+    );
+    await assert.rejects(
+      run((s) =>
+        d.addContract(s, employee, {
+          memberId: fixed.member_id,
+          paidDate: '2026-11-01',
+          quantity: 10,
+          amount: 0,
+          category: 'pt',
+          saleType: 'renew',
+          fixedFee: 20000,
+        }),
+      ),
+      /관리자/,
+    );
+    await assert.rejects(
+      run((s) =>
+        d.setContractFee(s, a, fixed.id, { version: 99, fixedFee: 30000, reason: '충돌' }),
+      ),
+      /변경/,
+    );
+    await assert.rejects(
+      run((s) => d.setContractFee(s, a, fixed.id, { version: 1, fixedFee: 30000, reason: '' })),
+      /사유/,
+    );
+    const changed = await run((s) =>
+      d.setContractFee(s, a, regular.id, {
+        version: 1,
+        fixedFee: 20000,
+        reason: '기존 회원권 조건 정정',
+      }),
+    );
+    assert.equal(changed.fixed_fee, 20000);
+    assert.equal(
+      (await d.calculate(read(), p, '2026-11')).lines.find((l) => l.contractId === regular.id).unit,
+      20000,
+    );
+    await run((s) =>
+      d.setContractFee(s, a, regular.id, { version: 2, fixedFee: null, reason: '비율제 복귀' }),
+    );
+    assert.equal(
+      (await d.calculate(read(), p, '2026-11')).lines.find((l) => l.contractId === regular.id).unit,
+      33000,
+    );
+    assert.equal((await read().query('audit', [['action', '==', 'contract-fee']])).length, 2);
+    const row = [
+      'fixed-import',
+      '이관 고정',
+      p.name,
+      'fixed-ticket',
+      '2026-10-01',
+      '2026-10-01',
+      '0',
+      '36',
+      '20',
+      '2026-11-01',
+    ];
+    const text = imp.fixedFeeImportHeader + '\n' + [...row, '20000'].join('\t');
+    assert.deepEqual((await imp.memberPreview(read(), a, { text })).errors, []);
+    assert.equal((await run((s) => imp.importMembers(s, a, { text }))).contracts, 1);
+    assert.equal((await imp.memberPreview(read(), a, { text })).rows[0].duplicate, true);
+    assert.equal(
+      (await imp.memberPreview(read(), a, { text: text.replace(/20000$/, '30000') })).errors.length,
+      1,
+    );
+    const legacy =
+      imp.importHeader +
+      '\n' +
+      ['legacy', '기존 형식', p.name, 'legacy-ticket', ...row.slice(4)].join('\t');
+    assert.deepEqual((await imp.memberPreview(read(), a, { text: legacy })).errors, []);
+    assert.equal((await imp.memberPreview(read(), a, { text: legacy })).rows[0].fixedFee, null);
+    const imported = (await read().query('contracts', [['external_ref', '==', 'fixed-ticket']]))[0];
+    assert.equal((await d.progress(read(), imported)).remaining, 16);
+    assert.equal(imported.fixed_fee, 20000);
+    // A submitted payroll also blocks fee changes, including changes to percentage mode.
+    await run((s) => s.put('payroll_runs', d.pair(p.id, '2026-11'), { state: 'submitted' }));
+    await assert.rejects(
+      run((s) =>
+        d.setContractFee(s, a, fixed.id, { version: 1, fixedFee: null, reason: '제출 후' }),
+      ),
+      /제출/,
+    );
+    await run((s) => s.put('periods', '2026-11', { state: 'closed' }));
+    await assert.rejects(
+      run((s) =>
+        d.setContractFee(s, a, fixed.id, { version: 1, fixedFee: 30000, reason: '마감 후' }),
+      ),
+      /마감/,
+    );
+    assert.equal((await read().get('contracts', fixed.id)).fixed_fee, 20000);
+  },
+);

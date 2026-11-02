@@ -39,6 +39,11 @@ async function snap(page, title, text) {
 }
 async function navigate(page, target) {
   const mobile = page.viewportSize().width <= 760;
+  if (mobile && (await page.locator('.trainer-workspace.view-payroll').count())) {
+    await page.locator('.mobile-brand').click();
+    await page.locator('.trainer-home, .trainer-workspace:not(.view-payroll)').first().waitFor();
+    if (target === 'dashboard') return;
+  }
   if (mobile && (await page.locator('.mobile-nav [data-view="' + target + '"]').count()) === 0) {
     await page.locator('#menu-toggle').click();
     await page.locator('.sidebar nav [data-view="' + target + '"]').click();
@@ -181,6 +186,69 @@ async function request(page, route, method = 'GET', body) {
       return { status: r.status, body: await r.json() };
     },
     { route, method, body },
+  );
+}
+async function fixedFeeScenario(admin) {
+  const month = '2026-09';
+  const person = (
+    await request(admin, '/people', 'POST', {
+      name: '고정 수업료 선생님',
+      profile: 'standard',
+      hireMonth: '2026-01',
+    })
+  ).body;
+  await admin.reload();
+  await admin.waitForSelector('#month');
+  await admin.setViewportSize({ width: 390, height: 844 });
+  await admin.locator('#month').fill(month);
+  await admin.locator('#month').dispatchEvent('change');
+  await navigate(admin, 'members');
+  await admin.locator('#new-registration').click();
+  await admin.locator('[name=name]').fill('고정 이만원 회원');
+  await admin.locator('[name=personId]').selectOption(person.id);
+  await admin.locator('[name=paidDate]').fill(month + '-01');
+  await admin.locator('[name=startDate]').fill(month + '-01');
+  await admin.locator('[name=amount]').fill('0');
+  await admin.locator('[name=quantity]').fill('36');
+  await admin.locator('[name=fixedFee]').fill('20000');
+  await clickSubmit(admin);
+  await closed(admin);
+  const member = (await request(admin, '/members?q=' + encodeURIComponent('고정 이만원 회원'))).body
+    .items[0];
+  const contract = (await request(admin, '/members/' + member.id)).body.contracts[0];
+  assert.equal(contract.fixed_fee, 20000);
+  const recorded = await request(admin, '/lessons', 'POST', {
+    contractId: contract.id,
+    date: month + '-10',
+    time: '10:00',
+  });
+  assert.equal(recorded.status, 200);
+  let pay = (await request(admin, '/payroll/' + person.id + '?month=' + month)).body;
+  assert.equal(pay.commission, 20000);
+  await admin.locator('[data-contracts="' + member.id + '"]').click();
+  await admin.locator('[data-contract-fee="' + contract.id + '"]').waitFor();
+  assert.ok((await admin.locator('#modal').innerText()).includes('고정 회당 20,000원'));
+  await admin.locator('[data-contract-fee="' + contract.id + '"]').click();
+  await admin.locator('[name=fixedFee]').fill('25000');
+  await admin.locator('[name=reason]').fill('계약 조건 확인');
+  await clickSubmit(admin);
+  await closed(admin);
+  pay = (await request(admin, '/payroll/' + person.id + '?month=' + month)).body;
+  assert.equal(pay.commission, 25000);
+  assert.equal((await request(admin, '/members/' + member.id)).body.contracts[0].remaining, 35);
+  await navigate(admin, 'payroll');
+  await admin.locator('[data-payroll="' + person.id + '"]:visible').click();
+  await admin.locator('#modal[open]').waitFor();
+  assert.ok((await admin.locator('#modal').innerText()).includes('고정 수업료 · 지급률 미적용'));
+  assert.equal(
+    await admin.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1),
+    true,
+  );
+  // Close through the shared dialog control before the next scenario.
+  await admin.evaluate(() => document.querySelector('#modal').close());
+  await admin.setViewportSize({ width: 1440, height: 1000 });
+  console.log(
+    'PASS: mobile fixed-fee registration, admin amendment, remaining count and payroll labels.',
   );
 }
 async function extendedScenario(admin, browser) {
@@ -356,6 +424,25 @@ async function extendedScenario(admin, browser) {
     await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1),
     true,
   );
+  await navigate(page, 'payroll');
+  await page.locator('.trainer-rate').waitFor();
+  const actualPayroll = await checked(page, '/payroll/' + mixed.id + '?month=' + month);
+  assert.ok(
+    (await page.locator('.trainer-group-total').innerText()).includes(
+      new Intl.NumberFormat('ko-KR').format(actualPayroll.groupCommission),
+    ),
+  );
+  assert.equal(await page.locator('.mobile-nav').isVisible(), false);
+  if (reportMode)
+    await page.screenshot({ path: path.join(out, 'trainer-group-payroll.png'), fullPage: false });
+  await page.setViewportSize({ width: 320, height: 740 });
+  assert.equal(
+    await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1),
+    true,
+    '320px personal payroll',
+  );
+  const submitBox = await page.locator('#trainer-open-submit').boundingBox();
+  assert.ok(submitBox.y + submitBox.height <= 740, 'submit stays inside mobile viewport');
   await ctx.close();
   console.log(
     'PASS: alphanumeric employee issuance, VAT supply, duet pair/signatures, fixed group wage, monthly membership replacement, 2h30 hourly and daily wage UI.',
@@ -494,7 +581,13 @@ try {
   await record(teacher, context, '가상 회원01', '2026-10-07', true);
   await record(teacher, context, '가상 신규회원', '2026-10-08');
   await navigate(teacher, 'payroll');
-  assert.match(await teacher.locator('table').textContent(), /580,200/);
+  assert.match(await teacher.locator('.trainer-net').textContent(), /580,200/);
+  assert.equal(await teacher.locator('#trainer-open-submit').isVisible(), true);
+  if (reportMode)
+    await teacher.screenshot({
+      path: path.join(out, 'trainer-payroll-final.png'),
+      fullPage: false,
+    });
   const source = (member, date, status) =>
     '2026.10.' +
     date +
@@ -538,7 +631,8 @@ try {
     '10. 직원이 월말 내역 확인 후 제출',
     '총 3회 × 회당 5만원 = 수업료 15만원. 기본급 50만원을 더한 지급총액 65만원에서 3.3%를 뺀 실지급 예상은 628,550원입니다. 직원이 확인 완료·제출합니다.',
   );
-  await teacher.locator('#submit-payroll').click();
+  await teacher.locator('#modal-x').click();
+  await teacher.locator('#trainer-open-submit').click();
   await teacher.locator('[name=note]').fill('가상 수업·서명 내역 확인');
   await clickSubmit(teacher);
   await closed(teacher);
@@ -694,9 +788,34 @@ try {
   );
   await teacher.setViewportSize({ width: 390, height: 844 });
 
+  const navButtons = await teacher.locator('.mobile-nav button').evaluateAll((buttons) =>
+    buttons.map((b) => {
+      const r = b.getBoundingClientRect();
+      return { x: r.x, y: r.y, width: r.width, bottom: r.bottom };
+    }),
+  );
+  assert.equal(navButtons.length, 4);
+  assert.ok(
+    navButtons.every((b) => Math.abs(b.y - navButtons[0].y) < 2 && b.bottom <= 844),
+    'home navigation is one visible row: ' +
+      JSON.stringify({
+        navButtons,
+        viewport: await teacher.evaluate(() => ({
+          width: innerWidth,
+          height: innerHeight,
+          nav: {
+            display: getComputedStyle(document.querySelector('.mobile-nav')).display,
+            direction: getComputedStyle(document.querySelector('.mobile-nav')).flexDirection,
+            rect: document.querySelector('.mobile-nav').getBoundingClientRect().toJSON(),
+          },
+        })),
+      }),
+  );
+  assert.ok(navButtons[3].x > navButtons[0].x, 'home navigation spans the screen');
   if (reportMode)
     await teacher.screenshot({ path: path.join(out, 'trainer-home-final.png'), fullPage: false });
   assert.equal(errors.length, 0, errors.join('\n'));
+  if (firebaseMode && process.argv.includes('--fixed-fee')) await fixedFeeScenario(admin);
   if (firebaseMode && process.argv.includes('--classes')) await extendedScenario(admin, browser);
   assert.deepEqual(errors, []);
   console.log(

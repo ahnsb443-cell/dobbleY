@@ -174,6 +174,8 @@ export async function addContract(s, a, b) {
   if (b.vatIncluded !== undefined && typeof b.vatIncluded !== 'boolean')
     fail(400, 'VAT 포함 여부를 확인하세요.');
   await guard(s, paid.slice(0, 7), p.id, true);
+  const fixedFee = b.fixedFee == null ? null : integer(b.fixedFee, '고정 수업료', 1, 1000000);
+  if (fixedFee !== null) admin(a);
   const qty = integer(b.quantity, '등록횟수', 1, 10000),
     raw = integer(b.amount, '결제금액');
   const c = {
@@ -190,6 +192,7 @@ export async function addContract(s, a, b) {
     vat_amount: b.vatIncluded ? raw - Math.round(raw / 1.1) : null,
     amount_basis: b.vatIncluded ? 'vat-included' : 'supply',
     quantity: qty,
+    fixed_fee: fixedFee,
     carry_used: integer(b.carryUsed || 0, '기진행횟수', 0, qty),
     external_ref: b.externalRef || null,
     active: 1,
@@ -217,7 +220,7 @@ export async function addContract(s, a, b) {
     version: 1,
   };
   await s.put('sales', sale.id, sale, { create: true });
-  await s.audit(a, 'create', 'contract', c.id, '', { amount: c.amount, quantity: qty });
+  await s.audit(a, 'create', 'contract', c.id, '', { amount: c.amount, quantity: qty, fixedFee });
   return { ...c, used: c.carry_used, remaining: qty - c.carry_used };
 }
 async function lessonGuard(s, c, date) {
@@ -338,6 +341,22 @@ export async function signLesson(s, a, key, b) {
   });
   return { id: sig.id, lesson_id: key, signed_at: sig.signed_at, payload_hash: sig.payload_hash };
 }
+export async function setContractFee(s, a, key, b) {
+  admin(a);
+  const c = await required(s, 'contracts', key);
+  version(c, b.version);
+  const fixedFee = b.fixedFee == null ? null : integer(b.fixedFee, '고정 수업료', 1, 1000000);
+  const reason = text(b.reason, '변경 사유', 300);
+  // A contract's fee applies to all its lessons. Never change a submitted or closed period.
+  for (const l of await contractLessons(s, c.id)) await guard(s, l.month, l.person_id);
+  const next = { ...c, fixed_fee: fixedFee, version: c.version + 1 };
+  await s.put('contracts', key, next);
+  await s.audit(a, 'contract-fee', 'contract', key, reason, {
+    before: c.fixed_fee ?? null,
+    after: fixedFee,
+  });
+  return next;
+}
 export async function listMembers(s, a, url) {
   const { after, limit } = page(url),
     filters = [['active', '==', 1]],
@@ -398,6 +417,7 @@ export async function listLessons(s, a, url) {
       instructor: (await required(s, 'people', l.person_id)).name,
       quantity: c.quantity,
       amount: c.amount,
+      category: c.category,
       confirmation: await confirmation(s, l),
     });
   }
@@ -477,7 +497,8 @@ export async function calculate(s, p, m) {
       date: l.date,
       time: l.time,
       version: l.version,
-      unit: trainer(p) ? Math.round(((c.amount / c.quantity) * percent) / 100) : 0,
+      unit: trainer(p) ? (c.fixed_fee ?? Math.round(((c.amount / c.quantity) * percent) / 100)) : 0,
+      fixedFee: c.fixed_fee ?? null,
       signature: sig.state,
       signatureId: sig.signatureId,
       sessionId: l.session_id || null,
@@ -499,9 +520,13 @@ export async function calculate(s, p, m) {
       !parts.every((l) => session.lesson_ids.includes(l.lessonId))
     )
       fail(409, '듀엣 두 회원의 기록을 함께 확인하세요.');
-    const total = Math.round((parts.reduce((n, l) => n + l.rawUnit, 0) * percent) / 100);
-    parts[0].unit = Math.round((parts[0].rawUnit * percent) / 100);
-    parts[1].unit = total - parts[0].unit;
+    const variable = parts.filter((l) => l.fixedFee === null);
+    const total = Math.round((variable.reduce((n, l) => n + l.rawUnit, 0) * percent) / 100);
+    if (variable.length === 2) {
+      variable[0].unit = Math.round((variable[0].rawUnit * percent) / 100);
+      variable[1].unit = total - variable[0].unit;
+    }
+    // Fixed payments remain per member; only percentage-based parts share rounding.
   }
   for (const line of lines) delete line.rawUnit;
   const groupLines = (await monthRows(s, 'group_lessons', m, p.id)).filter(
