@@ -956,13 +956,242 @@ test(
         },
       );
       await t.test(
-        '대표 계정은 급여 없이 현황만 열람하며 관리자 역할 값으로도 쓰기 우회 불가',
+        '노쇼는 서명 없이 1회 차감·정상 정산하며 미서명과 다짐 누락에서 제외',
         async () => {
-          const representative = (
+          const d = await import('../firebase/domain.mjs');
+          const imports = await import('../firebase/imports.mjs');
+          const person = (
             await ok('/people', {
               method: 'POST',
               auth: owner,
-              body: { name: '현황 열람 대표', profile: 'representative', hireMonth: '2026-11' },
+              body: { name: '노쇼 검증 강사', profile: 'standard', hireMonth: '2026-01' },
+            })
+          ).body;
+          const registration = (
+            await ok('/registrations', {
+              method: 'POST',
+              auth: owner,
+              body: {
+                name: '노쇼 검증 회원',
+                personId: person.id,
+                paidDate: '2026-11-01',
+                quantity: 10,
+                amount: 0,
+                category: 'pt',
+                saleType: 'new',
+                fixedFee: 20000,
+              },
+            })
+          ).body;
+          const contract = registration.contract;
+          const input = { contractId: contract.id, date: '2026-11-01', time: '09:00' };
+          const remaining = async () => (await d.progress(new Store(svc.db), contract)).remaining;
+          const pay = () => d.calculate(new Store(svc.db), person, '2026-11');
+          let draft = (await ok('/member-mode', { method: 'POST', auth: owner, body: input })).body;
+          assert.equal(await remaining(), 10);
+          await ok('/member-mode/exit', { method: 'POST', auth: owner, body: {} });
+          assert.equal(await remaining(), 10);
+          draft = (await ok('/member-mode', { method: 'POST', auth: owner, body: input })).body;
+          const body = {
+            version: draft.version,
+            snapshot: draft.snapshot,
+            noShow: true,
+            confirmed: true,
+            strokes: [],
+          };
+          assert.equal(
+            (
+              await req('/member-mode/sign', {
+                method: 'POST',
+                auth: owner,
+                body: { ...body, confirmed: false },
+              })
+            ).status,
+            400,
+          );
+          assert.equal(await remaining(), 10);
+          assert.equal(
+            (
+              await req('/member-mode/sign', {
+                method: 'POST',
+                auth: owner,
+                body: { ...body, snapshot: { ...draft.snapshot, time: '10:00' } },
+              })
+            ).status,
+            409,
+          );
+          const saved = (
+            await ok('/member-mode/sign', { method: 'POST', auth: owner, key: 'noshow-once', body })
+          ).body;
+          assert.equal(saved.noShow, true);
+          assert.equal(
+            (
+              await ok('/member-mode/sign', {
+                method: 'POST',
+                auth: owner,
+                key: 'noshow-once',
+                body,
+              })
+            ).body.lesson_id,
+            saved.lesson_id,
+          );
+          const receipt = (await ok('/member-mode', { auth: owner })).body;
+          assert.equal(receipt.confirmation.state, 'noshow');
+          assert.equal(receipt.signature, null);
+          assert.ok(receipt.noShow.actor_id);
+          assert.equal(receipt.version, 2);
+          assert.equal(await remaining(), 9);
+          assert.equal(
+            (await svc.db.collection('signatures').where('lesson_id', '==', saved.lesson_id).get())
+              .size,
+            0,
+          );
+          await ok('/member-mode/exit', { method: 'POST', auth: owner, body: {} });
+          assert.equal((await pay()).commission, 20000);
+          assert.equal((await pay()).unconfirmed, 0);
+          assert.equal(
+            (await pay()).lines.find((x) => x.lessonId === saved.lesson_id).signature,
+            'noshow',
+          );
+          assert.equal(
+            (await imports.reconcile(new Store(svc.db), '2026-11', person.id))[0].kind,
+            'noshow',
+          );
+          const summary = (
+            await ok('/reconcile?month=2026-11&summary=1&personId=' + person.id, { auth: owner })
+          ).body;
+          assert.equal(summary.unresolved, 0);
+          const submitted = (
+            await ok('/payroll/' + person.id, {
+              method: 'POST',
+              auth: owner,
+              body: { month: '2026-11', action: 'submit', version: 0 },
+            })
+          ).body;
+          const approved = (
+            await ok('/payroll/' + person.id, {
+              method: 'POST',
+              auth: owner,
+              body: { month: '2026-11', action: 'approve', version: submitted.version },
+            })
+          ).body;
+          assert.deepEqual(approved.warning, {
+            unconfirmed: 0,
+            unresolved: 0,
+            sourceMissing: false,
+          });
+          assert.equal(approved.currentUnconfirmed, 0);
+          assert.equal(approved.commission, 20000);
+          await ok('/payroll/' + person.id, {
+            method: 'POST',
+            auth: owner,
+            body: {
+              month: '2026-11',
+              action: 'return',
+              version: approved.version,
+              note: '노쇼 삭제 복구 검증을 위한 반려',
+            },
+          });
+          await assert.rejects(
+            d.owned(
+              new Store(svc.db),
+              { id: 'other-teacher', role: 'employee', person_id: 'other-person' },
+              'lessons',
+              saved.lesson_id,
+            ),
+            (e) => e.status === 403,
+          );
+          const history = (await ok('/lessons/' + saved.lesson_id + '/signatures', { auth: owner }))
+            .body;
+          assert.equal(history.items.length, 0);
+          assert.ok(history.noShow.recorded_at);
+          await ok('/member-mode', {
+            method: 'POST',
+            auth: owner,
+            body: { lessonId: saved.lesson_id },
+          });
+          assert.equal(
+            (
+              await req('/member-mode/sign', {
+                method: 'POST',
+                auth: owner,
+                body: { ...body, version: 2, strokes },
+              })
+            ).status,
+            409,
+          );
+          await ok('/member-mode/exit', { method: 'POST', auth: owner, body: {} });
+          await ok('/lessons/' + saved.lesson_id, {
+            method: 'DELETE',
+            auth: owner,
+            body: { version: 2, reason: '노쇼 삭제 복구 검증' },
+          });
+          assert.equal(await remaining(), 10);
+          assert.equal((await pay()).commission, 0);
+          assert.ok((await svc.db.collection('lessons').doc(saved.lesson_id).get()).data().no_show);
+          const pending = (
+            await ok('/lessons', { method: 'POST', auth: owner, body: { ...input, time: '11:00' } })
+          ).body;
+          await atomic(svc.db, (s) =>
+            s.put('payroll_runs', d.pair(person.id, '2026-11'), {
+              person_id: person.id,
+              month: '2026-11',
+              state: 'submitted',
+              version: 1,
+            }),
+          );
+          await assert.rejects(
+            atomic(svc.db, (s) =>
+              d.signLesson(s, { id: 'admin', role: 'admin' }, pending.id, {
+                version: 1,
+                snapshot: undefined,
+                confirmed: true,
+                noShow: true,
+              }),
+            ),
+            /수업 내용/,
+          );
+          const snapshot = await d.snapshot(new Store(svc.db), pending.id);
+          await assert.rejects(
+            atomic(svc.db, (s) =>
+              d.signLesson(s, { id: 'admin', role: 'admin' }, pending.id, {
+                version: 1,
+                snapshot,
+                confirmed: true,
+                noShow: true,
+              }),
+            ),
+            /제출/,
+          );
+          await atomic(svc.db, (s) => s.del('payroll_runs', d.pair(person.id, '2026-11')));
+          await ok('/member-mode', { method: 'POST', auth: owner, body: { lessonId: pending.id } });
+          await ok('/member-mode/sign', {
+            method: 'POST',
+            auth: owner,
+            body: { version: 1, snapshot, confirmed: true, strokes },
+          });
+          await ok('/member-mode/exit', { method: 'POST', auth: owner, body: {} });
+          await assert.rejects(
+            atomic(svc.db, (s) =>
+              d.signLesson(s, { id: 'admin', role: 'admin' }, pending.id, {
+                version: 1,
+                snapshot,
+                confirmed: true,
+                noShow: true,
+              }),
+            ),
+            /서명/,
+          );
+        },
+      );
+      await t.test(
+        '대표 계정은 본인 급여 없이 관리자와 같은 조회·등록·정정·삭제 가능',
+        async () => {
+          const rep = (
+            await ok('/people', {
+              method: 'POST',
+              auth: owner,
+              body: { name: '관리자 권한 대표', profile: 'representative', hireMonth: '2026-11' },
             })
           ).body;
           const issued = (
@@ -972,69 +1201,130 @@ test(
               body: {
                 username: 'representative',
                 password: '0261',
-                role: 'admin',
-                personId: representative.id,
+                role: 'employee',
+                personId: rep.id,
               },
             })
           ).body;
-          assert.equal(issued.role, 'employee');
-          let viewer = (
+          assert.equal(issued.role, 'admin');
+          let account = (
             await ok('/login', {
               method: 'POST',
               body: { username: 'representative', password: '0261' },
             })
           ).auth;
-          viewer = (
+          assert.equal(
+            (await req('/people', { auth: account })).status,
+            403,
+            '대표도 최초 비밀번호 변경 필요',
+          );
+          account = (
             await ok('/password', {
               method: 'POST',
-              auth: viewer,
+              auth: account,
               body: { currentPassword: '0261', password: '0372' },
             })
           ).auth;
-          assert.equal((await ok('/me', { auth: viewer })).body.user.readOnly, true);
-          const overview = (await ok('/overview?month=2026-11', { auth: viewer })).body;
-          assert.ok(Array.isArray(overview.staff));
+          const me = (await ok('/me', { auth: account })).body.user;
+          assert.equal(me.role, 'admin');
+          assert.equal(me.representative, true);
+          assert.equal(me.readOnly, false);
+          for (const route of [
+            '/people',
+            '/members',
+            '/accounts',
+            '/lessons?month=2026-11',
+            '/payroll?month=2026-11',
+            '/reconcile?month=2026-11',
+          ])
+            await ok(route, { auth: account });
+          const payroll = (await ok('/payroll?month=2026-11', { auth: account })).body;
           assert.equal(
-            overview.staff.some((p) => p.name === '현황 열람 대표'),
+            payroll.items.some((x) => x.personId === rep.id),
             false,
           );
-          const payroll = (await ok('/payroll?month=2026-11', { auth: owner })).body;
           assert.equal(
-            payroll.items.some((p) => p.personId === representative.id),
-            false,
+            (await req('/payroll/' + rep.id + '?month=2026-11', { auth: account })).status,
+            404,
           );
-          for (const [route, method] of [
-            ['/payroll?month=2026-11', 'GET'],
-            ['/people', 'GET'],
-            ['/members', 'GET'],
-            ['/lessons', 'POST'],
-            ['/lessons/any', 'DELETE'],
-            ['/membership-total', 'PUT'],
-            ['/accounts', 'POST'],
-            ['/periods/2026-11', 'POST'],
-          ]) {
-            assert.equal(
-              (
-                await req(route, {
-                  method,
-                  auth: viewer,
-                  ...(method === 'GET' ? {} : { body: {} }),
-                })
-              ).status,
-              403,
-              route,
-            );
-          }
-          await atomic(svc.db, async (s) => {
-            const account = await s.get('accounts', issued.id);
-            await s.put('accounts', issued.id, { ...account, role: 'admin' });
+          const trainer = (
+            await ok('/people', {
+              method: 'POST',
+              auth: account,
+              body: { name: '대표 관리 검증 강사', profile: 'standard', hireMonth: '2026-01' },
+            })
+          ).body;
+          const reg = (
+            await ok('/registrations', {
+              method: 'POST',
+              auth: account,
+              body: {
+                name: '대표 관리 검증 회원',
+                personId: trainer.id,
+                paidDate: '2026-11-01',
+                quantity: 10,
+                amount: 0,
+                category: 'pt',
+                saleType: 'new',
+                fixedFee: 20000,
+              },
+            })
+          ).body;
+          const lesson = (
+            await ok('/lessons', {
+              method: 'POST',
+              auth: account,
+              body: { contractId: reg.contract.id, date: '2026-11-01', time: '10:00' },
+            })
+          ).body;
+          const corrected = (
+            await ok('/lessons/' + lesson.id, {
+              method: 'PATCH',
+              auth: account,
+              body: { version: 1, date: '2026-11-01', time: '11:00', reason: '대표 정정 검증' },
+            })
+          ).body;
+          assert.equal(corrected.time, '11:00');
+          await ok('/lessons/' + lesson.id, {
+            method: 'DELETE',
+            auth: account,
+            body: { version: corrected.version, reason: '대표 삭제 검증' },
           });
-          assert.equal((await ok('/me', { auth: viewer })).body.user.readOnly, true);
           assert.equal(
-            (await req('/members', { method: 'POST', auth: viewer, body: {} })).status,
-            403,
+            (await ok('/members/' + reg.member.id, { auth: account })).body.contracts[0].remaining,
+            10,
           );
-          assert.equal((await ok('/overview?month=2026-11', { auth: viewer })).status, 200);
+          assert.equal(
+            (await ok('/payroll/' + trainer.id + '?month=2026-11', { auth: account })).body
+              .commission,
+            0,
+          );
+          // Previously issued representative accounts stored as employee receive the same effective permissions.
+          await atomic(svc.db, async (s) => {
+            const old = await s.get('accounts', issued.id);
+            await s.put('accounts', issued.id, { ...old, role: 'employee' });
+          });
+          assert.equal((await ok('/me', { auth: account })).body.user.role, 'admin');
+          await ok('/members', {
+            method: 'POST',
+            auth: account,
+            body: { name: '기존 대표 계정 등록 검증', personId: trainer.id },
+          });
+          await ok('/accounts', {
+            method: 'POST',
+            auth: account,
+            body: {
+              username: 'rep-created-staff',
+              password: '0482',
+              role: 'employee',
+              personId: trainer.id,
+            },
+          });
+          const overview = (await ok('/overview?month=2026-11', { auth: account })).body;
+          assert.equal(
+            overview.staff.some((x) => x.name === '관리자 권한 대표'),
+            false,
+          );
         },
       );
     } finally {

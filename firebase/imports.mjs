@@ -242,13 +242,15 @@ export async function reconcile(s, m, pid = null) {
       (r) => !r.contract_id || r.contract_id === l.contract_id,
     );
     found.forEach((r) => used.add(r.id));
-    const kind = !found.length
-      ? 'payroll-only'
-      : found.length > 1 || (counts.get(group(l)) > 1 && found.some((r) => !r.contract_id))
-        ? 'ambiguous'
-        : found[0].state === 'attended'
-          ? 'matched'
-          : 'payroll-' + found[0].state;
+    const kind = l.no_show
+      ? 'noshow'
+      : !found.length
+        ? 'payroll-only'
+        : found.length > 1 || (counts.get(group(l)) > 1 && found.some((r) => !r.contract_id))
+          ? 'ambiguous'
+          : found[0].state === 'attended'
+            ? 'matched'
+            : 'payroll-' + found[0].state;
     out.push({
       key: 'lesson:' + l.id,
       lessonId: l.id,

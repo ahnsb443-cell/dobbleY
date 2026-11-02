@@ -96,6 +96,7 @@ export async function snapshot(s, lid) {
   };
 }
 export async function confirmation(s, l) {
+  if (l.no_show) return { state: 'noshow', signatureId: null, signedAt: null };
   const sig = l.latest_signature_id ? await s.get('signatures', l.latest_signature_id) : null;
   const snap = sig ? await snapshot(s, l.id) : null;
   return {
@@ -320,7 +321,19 @@ export async function signLesson(s, a, key, b) {
   if (JSON.stringify(snap) !== JSON.stringify(b.snapshot))
     fail(409, '수업 내용이 변경되었습니다. 다시 확인하세요.');
   if (b.confirmed !== true) fail(400, '회원 확인이 필요합니다.');
+  if (l.no_show) fail(409, '이미 노쇼로 처리된 수업입니다.');
   if ((await confirmation(s, l)).state === 'signed') fail(409, '이미 서명된 수업입니다.');
+  if (b.noShow !== undefined && typeof b.noShow !== 'boolean') fail(400, '노쇼 선택을 확인하세요.');
+  if (b.noShow === true) {
+    if (l.latest_signature_id) fail(409, '회원 서명 이력이 있는 수업은 노쇼로 변경할 수 없습니다.');
+    await guard(s, l.month, l.person_id);
+    const record = { recorded_at: now(), actor_id: a.id, snapshot: snap };
+    await s.put('lessons', key, { ...l, no_show: record, version: l.version + 1 });
+    await s.audit(a, 'no-show', 'lesson', key, '회원 불참 · 1회 차감 · 수업료 정상 반영', {
+      snapshot: snap,
+    });
+    return { lesson_id: key, noShow: true, recorded_at: record.recorded_at };
+  }
   strokesValid(b.strokes);
   const payload = JSON.stringify(b.strokes),
     sig = {
@@ -625,7 +638,7 @@ export async function calculate(s, p, m) {
     tax,
     gross,
     net,
-    unconfirmed: lines.filter((l) => l.signature !== 'signed').length,
+    unconfirmed: lines.filter((l) => !['signed', 'noshow'].includes(l.signature)).length,
     termsId: terms.id,
     termsVersion: terms.version,
     ruleId: rule.id,
@@ -656,7 +669,7 @@ export async function result(s, a, pid, m) {
   if (frozen) {
     currentUnconfirmed = 0;
     for (const l of (await monthRows(s, 'lessons', m, pid)).filter((l) => l.status === 'active'))
-      if ((await confirmation(s, l)).state !== 'signed') currentUnconfirmed++;
+      if (!['signed', 'noshow'].includes((await confirmation(s, l)).state)) currentUnconfirmed++;
   }
   const out = {
     ...calculated,

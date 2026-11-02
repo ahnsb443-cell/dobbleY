@@ -49,6 +49,7 @@ export function createFirebaseApi(
       version: l.version,
       snapshot: await d.snapshot(s, l.id),
       confirmation,
+      noShow: l.no_show || null,
       signature: sig
         ? {
             id: sig.id,
@@ -123,7 +124,7 @@ export function createFirebaseApi(
       return memberPayload(s, a);
     }
     if (kind === 'overview' && method === 'GET') {
-      if (!a.read_only) d.admin(a);
+      d.admin(a);
       // This internal reader is used solely to aggregate existing results; no mutation is exposed.
       const reader = { ...a, role: 'admin' },
         staff = [];
@@ -284,6 +285,7 @@ export function createFirebaseApi(
         return {
           snapshot: await d.snapshot(s, key),
           confirmation: await d.confirmation(s, l),
+          noShow: l.no_show || null,
           items: items.map(({ id, lesson_id, snapshot, signed_at, payload_hash }) => ({
             id,
             lesson_id,
@@ -391,7 +393,7 @@ export function createFirebaseApi(
           total: items.length,
           unresolved: items.filter(
             (r) =>
-              r.kind !== 'matched' &&
+              !['matched', 'noshow'].includes(r.kind) &&
               !r.reviewed &&
               !['source-reserved', 'source-cancelled', 'source-absent'].includes(r.kind),
           ).length,
@@ -583,7 +585,7 @@ export function createFirebaseApi(
               id: uid,
               username: name,
               pin_key: pinKey,
-              role: p?.profile === 'representative' ? 'employee' : b.role,
+              role: p?.profile === 'representative' ? 'admin' : b.role,
               person_id: p?.id || null,
               display_name: p?.name || text(b.name, '이름'),
               active: 1,

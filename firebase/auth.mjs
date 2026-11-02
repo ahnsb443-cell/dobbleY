@@ -139,10 +139,10 @@ export async function authenticate(svc, req) {
     session.password_version !== a?.version
   )
     fail(401, '로그인이 만료되었습니다.');
-  const readOnly = await allowed(s, a);
+  const representative = await allowed(s, a);
   return {
     ...a,
-    read_only: readOnly,
+    role: representative ? 'admin' : a.role,
     session_hash: key,
     csrf: session.csrf,
     member_lesson_id: session.member_lesson_id,
@@ -151,15 +151,16 @@ export async function authenticate(svc, req) {
 }
 export async function userView(s, a) {
   const p = a.person_id ? await person(s, a, a.person_id) : null;
-  return { ...accountView(a), person: p, readOnly: p?.profile === 'representative' };
+  const representative = p?.profile === 'representative';
+  return {
+    ...accountView(a),
+    role: representative ? 'admin' : a.role,
+    person: p,
+    representative,
+    readOnly: false,
+  };
 }
 export function checkSession(a, path, method) {
-  if (a.read_only) {
-    const read = method === 'GET' && ['/api/me', '/api/overview'].includes(path);
-    const self =
-      method === 'POST' && ['/api/password', '/api/logout', '/api/member-mode/exit'].includes(path);
-    if (!read && !self) fail(403, '대표 계정은 센터 현황 열람만 가능합니다.');
-  }
   if (a.must_change && !['/api/me', '/api/password', '/api/logout'].includes(path))
     fail(403, '임시 비밀번호를 먼저 변경하세요.');
   if (
@@ -182,12 +183,12 @@ export function checkSession(a, path, method) {
 export async function freshActor(s, a) {
   const current = await s.get('accounts', a.id),
     session = await s.get('auth_sessions', a.session_hash);
-  const readOnly = await allowed(s, current);
+  const representative = await allowed(s, current);
   if (!session || session.expires < Date.now() || session.password_version !== current.version)
     fail(401, '로그인이 만료되었습니다.');
   return {
     ...current,
-    read_only: readOnly,
+    role: representative ? 'admin' : current.role,
     session_hash: a.session_hash,
     csrf: session.csrf,
     member_lesson_id: session.member_lesson_id,

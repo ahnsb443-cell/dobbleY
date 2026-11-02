@@ -34,6 +34,7 @@ let user = null,
   sequence = 0,
   lessonsIncludeDeleted = false,
   memberState = null,
+  memberReturnTimer = null,
   installPrompt = null;
 const titles = {
   dashboard: '운영 현황',
@@ -48,20 +49,17 @@ const titles = {
   password: '내 비밀번호',
   sales: '센터 매출 · 환불',
 };
-const isViewer = () => !!user?.readOnly;
-const isAdmin = () => user?.role === 'admin' && !isViewer(),
+const isAdmin = () => user?.role === 'admin',
   isGroupOnly = () => user?.person?.profile === 'group',
   isTrainer = () =>
     !!user?.person &&
     !['fc', 'staff', 'part', 'daily', 'group', 'representative'].includes(user.person.profile),
   allowed = (v) =>
-    isViewer()
-      ? ['dashboard', 'password'].includes(v)
-      : (v !== 'groups' || extendedLessons) &&
-        (isAdmin() ||
-          ['payroll', 'password'].includes(v) ||
-          (isGroupOnly() && v === 'groups') ||
-          (isTrainer() && ['dashboard', 'members', 'lessons', 'groups'].includes(v)));
+    (v !== 'groups' || extendedLessons) &&
+    (isAdmin() ||
+      ['payroll', 'password'].includes(v) ||
+      (isGroupOnly() && v === 'groups') ||
+      (isTrainer() && ['dashboard', 'members', 'lessons', 'groups'].includes(v)));
 function toast(t) {
   $('#toast').textContent = t;
   $('#toast').classList.add('show');
@@ -100,35 +98,30 @@ function logo(className = '') {
   );
 }
 function mobileNavigation() {
-  const tabs = isViewer()
+  const tabs = isAdmin()
     ? [
-        ['dashboard', '센터 현황'],
-        ['password', '비밀번호'],
+        ['dashboard', '홈'],
+        ['members', '회원'],
+        ['lessons', '수업'],
+        ['payroll', '정산'],
       ]
-    : isAdmin()
+    : isGroupOnly() && extendedLessons
       ? [
-          ['dashboard', '홈'],
-          ['members', '회원'],
-          ['lessons', '수업'],
-          ['payroll', '정산'],
+          ['groups', '그룹레슨'],
+          ['payroll', '페이롤'],
+          ['password', '비밀번호'],
         ]
-      : isGroupOnly() && extendedLessons
+      : isTrainer()
         ? [
-            ['groups', '그룹레슨'],
+            ['dashboard', '홈'],
+            ['members', '회원'],
+            ['lessons', '수업'],
+            ['payroll', '페이롤'],
+          ]
+        : [
             ['payroll', '페이롤'],
             ['password', '비밀번호'],
-          ]
-        : isTrainer()
-          ? [
-              ['dashboard', '홈'],
-              ['members', '회원'],
-              ['lessons', '수업'],
-              ['payroll', '페이롤'],
-            ]
-          : [
-              ['payroll', '페이롤'],
-              ['password', '비밀번호'],
-            ];
+          ];
   return (
     '<nav class="mobile-nav" aria-label="주요 메뉴">' +
     tabs
@@ -197,13 +190,13 @@ function trainerHomeContent() {
               '</b><span> · ' +
               (l.session_id ? '듀엣' : l.category === 'pilates' ? '필라테스' : 'PT') +
               '</span></div><button class="signature-status ' +
-              (l.confirmation.state === 'signed' ? 'signed' : 'needs-sign') +
+              (['signed', 'noshow'].includes(l.confirmation.state) ? 'signed' : 'needs-sign') +
               '" ' +
-              (l.confirmation.state === 'signed' ? 'data-history' : 'data-sign') +
+              (['signed', 'noshow'].includes(l.confirmation.state) ? 'data-history' : 'data-sign') +
               '="' +
               l.id +
               '">' +
-              { signed: '서명 완료', unsigned: '서명 대기', stale: '재서명' }[
+              { signed: '서명 완료', noshow: '노쇼', unsigned: '서명 대기', stale: '재서명' }[
                 l.confirmation.state
               ] +
               '</button></article>',
@@ -291,40 +284,7 @@ function trainerPayrollContent() {
   );
 }
 
-function representativeOverviewContent() {
-  const staff = data.staff || [];
-  return (
-    '<div class="notice"><span>ⓘ</span><div><b>대표 · 센터 현황 열람 전용</b><p>대표는 급여 정산 대상에 포함되지 않습니다.</p></div></div><div class="stats">' +
-    [
-      ['센터 매출 · 공급가액', money(data.centerRevenue) + '원'],
-      ['직원 정산 합계', money(data.payrollTotal) + '원'],
-      ['진행 수업', (data.lessons || 0) + '회'],
-      ['서명 확인 필요', (data.unconfirmed || 0) + '건'],
-    ]
-      .map(([k, v]) => '<article><span>' + k + '</span><h2>' + v + '</h2></article>')
-      .join('') +
-    '</div><section class="panel"><div class="panel-head"><h3>직원별 운영 현황</h3></div>' +
-    table(
-      ['직원', '직책', '진행 수업', '정산 상태'],
-      staff.map(
-        (r) =>
-          '<tr><td>' +
-          esc(r.name) +
-          '</td><td>' +
-          esc(r.position) +
-          '</td><td>' +
-          r.lessons +
-          '회</td><td>' +
-          ({ draft: '작성 중', submitted: '제출 완료', approved: '승인 완료' }[r.state] ||
-            esc(r.state)) +
-          '</td></tr>',
-      ),
-    ) +
-    '</section>'
-  );
-}
 function dashboardContent() {
-  if (isViewer()) return representativeOverviewContent();
   if (!isAdmin()) return trainerHomeContent();
   const rows = data.items || [],
     own = rows.find((r) => r.personId === user.personId),
@@ -459,19 +419,23 @@ function dashboardContent() {
                 l.time +
                 '</small></div>' +
                 '<button class="' +
-                (l.confirmation.state === 'signed'
+                (['signed', 'noshow'].includes(l.confirmation.state)
                   ? 'signature-status signed'
                   : 'secondary needs-sign') +
                 '" ' +
-                (l.confirmation.state === 'signed' ? 'data-history' : 'data-sign') +
+                (['signed', 'noshow'].includes(l.confirmation.state)
+                  ? 'data-history'
+                  : 'data-sign') +
                 '="' +
                 l.id +
                 '">' +
-                (l.confirmation.state === 'signed'
-                  ? '서명 완료'
-                  : l.confirmation.state === 'stale'
-                    ? '재서명 받기'
-                    : '서명 받기') +
+                (l.confirmation.state === 'noshow'
+                  ? '노쇼'
+                  : l.confirmation.state === 'signed'
+                    ? '서명 완료'
+                    : l.confirmation.state === 'stale'
+                      ? '재서명 받기'
+                      : '서명 받기') +
                 '</button></article>',
             )
             .join('')
@@ -1229,12 +1193,6 @@ function passwordPage(forced = false) {
 }
 async function initialize() {
   window.scrollTo(0, 0);
-  if (isViewer()) {
-    people = user.person ? [user.person] : [];
-    profiles = {};
-    if (!allowed(view)) view = 'dashboard';
-    return load();
-  }
   const r = await api('/people');
   people = r.items;
   profiles = r.profiles;
@@ -1246,8 +1204,7 @@ async function load(extra = '') {
   const seq = ++sequence;
   try {
     let r;
-    if (isViewer() && view === 'dashboard') r = await api('/overview?month=' + month);
-    else if (view === 'dashboard') {
+    if (view === 'dashboard') {
       const [payroll, recent, reviewSummary, salesSummary] = await Promise.all([
         api('/payroll?month=' + month),
         api('/lessons?month=' + month + '&limit=5&order=recent'),
@@ -1323,7 +1280,11 @@ function render() {
     '</span><div>' +
     esc(user.name) +
     '<small>' +
-    (isViewer() ? '대표 · 현황 열람' : isAdmin() ? '관리자 · 전체 조회' : '직원 · 본인만 조회') +
+    (user.representative
+      ? '대표 · 관리자'
+      : isAdmin()
+        ? '관리자 · 전체 조회'
+        : '직원 · 본인만 조회') +
     '</small></div></div></div></aside><main class="' +
     (!isAdmin() && (isTrainer() || isGroupOnly()) ? 'trainer-workspace ' : '') +
     'view-' +
@@ -1339,13 +1300,11 @@ function render() {
     '</span><div><button class="text-button" data-install hidden>앱 설치</button><button class="text-button" id="refresh">새로고침</button><button class="text-button" id="logout">로그아웃</button><span class="avatar light">' +
     esc(user.name.slice(0, 1)) +
     '</span></div></header><div class="content"><div class="heading"><div><span class="eyebrow">DOUBLE Y GYM · EONJU</span><h1>' +
-    (isViewer()
-      ? '센터 현황'
-      : !isAdmin() && view === 'dashboard'
-        ? esc(user.name) + ' 선생님 👋'
-        : !isAdmin() && view === 'payroll'
-          ? '내 페이롤'
-          : titles[view]) +
+    (!isAdmin() && view === 'dashboard'
+      ? esc(user.name) + ' 선생님 👋'
+      : !isAdmin() && view === 'payroll'
+        ? '내 페이롤'
+        : titles[view]) +
     '<em>.</em></h1><p>' +
     (isAdmin()
       ? '매출과 수업, 확인 기록과 정산을 관리하세요.'
@@ -1634,6 +1593,7 @@ function lessonsContent() {
               {
                 unsigned: '회원 서명받기',
                 signed: '✓ 서명 완료',
+                noshow: '노쇼',
                 stale: '재서명 필요',
               }[l.confirmation.state] +
               '</button>') +
@@ -1674,7 +1634,7 @@ function peopleContent() {
           (p.end_date ? '<small>종료 ' + p.end_date + '</small>' : '') +
           '</td><td>' +
           (p.profile === 'representative'
-            ? '<span class="tag">급여 없음 · 현황 열람</span> '
+            ? '<span class="tag">급여 없음 · 관리자 권한</span> '
             : '<button class="text-button" data-compensation="' +
               p.id +
               '">급여 조건·월 입력</button> ') +
@@ -1694,7 +1654,7 @@ function peopleContent() {
           esc(a.name) +
           '</td><td>' +
           (people.find((p) => p.id === a.personId)?.profile === 'representative'
-            ? '대표 · 현황 열람'
+            ? '대표 · 관리자'
             : a.role === 'admin'
               ? '관리자'
               : '직원') +
@@ -1733,6 +1693,7 @@ function settingsContent() {
   );
 }
 const compareLabel = {
+  noshow: '노쇼 · 다짐 출석 대조 제외',
   matched: '일치 · 다짐 출석',
   'payroll-only': '페이롤만 기록',
   'payroll-absent': '수업 완료 / 다짐 결석',
@@ -1789,11 +1750,13 @@ function sourceContent() {
           '">' +
           esc(compareLabel[r.kind] || r.kind) +
           '</span></td><td>' +
-          ({ signed: '완료', unsigned: '미서명', stale: '재서명' }[r.confirmation] || '—') +
+          ({ signed: '완료', noshow: '노쇼', unsigned: '미서명', stale: '재서명' }[
+            r.confirmation
+          ] || '—') +
           '</td><td>' +
           (r.reviewed
             ? '<span class="muted">' + esc(r.reviewNote) + '</span>'
-            : r.kind === 'matched'
+            : ['matched', 'noshow'].includes(r.kind)
               ? '확인'
               : '<button class="text-button" data-review="' +
                 esc(r.key) +
@@ -1998,31 +1961,38 @@ async function showHistory(key) {
   const r = await api('/lessons/' + key + '/signatures');
   modal(
     '회원 서명 이력',
-    r.items
-      .map(
-        (sig) =>
-          '<article class="evidence"><b>' +
-          esc(sig.snapshot.member) +
-          ' · ' +
-          sig.snapshot.date +
-          ' ' +
-          sig.snapshot.time +
-          '</b><p>' +
-          sig.snapshot.ordinal +
-          ' / ' +
-          sig.snapshot.registered +
-          '회차 · 잔여 ' +
-          sig.snapshot.remaining +
-          '회<br>실제 서명 저장 ' +
-          new Date(sig.signed_at).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' }) +
-          '</p><button type="button" class="secondary" data-payload="' +
-          sig.id +
-          '">이 서명 원본 보기</button><div id="payload-' +
-          sig.id +
-          '"></div></article>',
-      )
-      .join('') ||
-      empty('서명 이력이 없습니다', '누락 서명은 나중에 해당 수업에서 받을 수 있습니다.'),
+    (r.noShow
+      ? '<div class="notice inner"><div><b>노쇼로 처리된 수업입니다.</b><p>회원 서명 없이 강사가 노쇼로 기록했습니다. 다짐 출석 대조에서 별도로 구분합니다.</p><small>' +
+        esc(new Date(r.noShow.recorded_at).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })) +
+        '</small></div></div>'
+      : '') +
+      (r.items
+        .map(
+          (sig) =>
+            '<article class="evidence"><b>' +
+            esc(sig.snapshot.member) +
+            ' · ' +
+            sig.snapshot.date +
+            ' ' +
+            sig.snapshot.time +
+            '</b><p>' +
+            sig.snapshot.ordinal +
+            ' / ' +
+            sig.snapshot.registered +
+            '회차 · 잔여 ' +
+            sig.snapshot.remaining +
+            '회<br>실제 서명 저장 ' +
+            new Date(sig.signed_at).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' }) +
+            '</p><button type="button" class="secondary" data-payload="' +
+            sig.id +
+            '">이 서명 원본 보기</button><div id="payload-' +
+            sig.id +
+            '"></div></article>',
+        )
+        .join('') ||
+        (r.noShow
+          ? ''
+          : empty('서명 이력이 없습니다', '누락 서명은 나중에 해당 수업에서 받을 수 있습니다.'))),
     () => {},
     '닫기',
     () => {
@@ -2116,7 +2086,7 @@ async function payrollDetail(key) {
             money(l.unit) +
             (l.fixedFee != null ? '<small>고정 수업료 · 지급률 미적용</small>' : '') +
             '</td><td>' +
-            { signed: '완료', unsigned: '미서명', stale: '재서명' }[l.signature] +
+            { signed: '완료', noshow: '노쇼', unsigned: '미서명', stale: '재서명' }[l.signature] +
             '</td></tr>',
         ),
       ) +
@@ -2267,11 +2237,11 @@ async function newAccountForm() {
       const update = () => {
         const representative =
           people.find((p) => p.id === $('[name=personId]').value)?.profile === 'representative';
-        if (representative) $('[name=role]').value = 'employee';
-        $('[name=role] option[value=admin]').disabled = representative;
-        $('[name=role] option[value=employee]').textContent = representative
-          ? '대표 · 현황 열람 전용'
-          : '직원 · 개인 자료만';
+        if (representative) $('[name=role]').value = 'admin';
+        $('[name=role] option[value=employee]').disabled = representative;
+        $('[name=role] option[value=admin]').textContent = representative
+          ? '대표 · 관리자'
+          : '관리자 · 전체 자료';
         const needed = $('[name=role]').value === 'admin' && !$('[name=personId]').value;
         $('#unlinked-admin-name').hidden = !needed;
         $('[name=name]').required = needed;
@@ -3010,6 +2980,8 @@ function bindPage() {
     );
 }
 async function leaveMemberMode() {
+  clearTimeout(memberReturnTimer);
+  memberReturnTimer = null;
   await api('/member-mode/exit', { method: 'POST', body: {} });
   memberState = null;
   $('#member-screen').hidden = true;
@@ -3023,6 +2995,8 @@ window.addEventListener('popstate', () => {
   if (extendedLessons && memberState) act(leaveMemberMode);
 });
 async function showMember(r) {
+  clearTimeout(memberReturnTimer);
+  memberReturnTimer = null;
   if (extendedLessons && !memberState && !history.state?.memberSigning)
     history.pushState({ memberSigning: true }, '', location.href);
   document.body.classList.remove('menu-open');
@@ -3032,7 +3006,9 @@ async function showMember(r) {
   const host = $('#member-screen');
   host.hidden = false;
   const snap = r.snapshot,
-    record = r.signature;
+    record = r.signature,
+    noShow = r.confirmation.state === 'noshow' && r.noShow,
+    completed = !!record || !!noShow;
   let strokes = [],
     active = null,
     key = uid();
@@ -3040,7 +3016,7 @@ async function showMember(r) {
     '<div class="member-sheet"><div class="member-brand">' +
     logo() +
     '<div>DOUBLE Y GYM<small>언주역점 · 수업 확인</small></div></div><div class="member-intro">' +
-    (record ? '✓ 서명 저장 완료' : '회원님, 수업 내용을 확인해주세요') +
+    (noShow ? '노쇼 저장 완료' : record ? '✓ 서명 저장 완료' : '회원님, 수업 내용을 확인해주세요') +
     '</div><h1>' +
     esc(snap?.member || '수업 확인') +
     '<small>회원님</small></h1>' +
@@ -3063,14 +3039,28 @@ async function showMember(r) {
       ? '<p class="signature-warning">내용 또는 회차가 변경됐습니다. 이전 원본은 보관하고 현재 내용으로 다시 서명받습니다.</p>'
       : '') +
     (snap
-      ? '<p class="signature-label">' +
-        (record ? '저장된 회원 확인 서명' : '아래 칸에 손가락으로 서명해주세요') +
-        '</p><canvas id="sign-pad" aria-label="회원 수업 확인 서명"></canvas>' +
-        (record
+      ? (extendedLessons && !completed
+          ? '<label class="consent"><input type="checkbox" id="no-show"> 노쇼 (회원 불참)</label><p class="muted">노쇼로 저장하면 회원 서명 없이 잔여 1회 차감·수업료 정상 반영됩니다.</p>'
+          : '') +
+        '<p class="signature-label">' +
+        (noShow
+          ? '노쇼로 기록되어 회원 서명이 없습니다.'
+          : record
+            ? '저장된 회원 확인 서명'
+            : '아래 칸에 손가락으로 서명해주세요') +
+        '</p>' +
+        (noShow ? '' : '<canvas id="sign-pad" aria-label="회원 수업 확인 서명"></canvas>') +
+        (completed
           ? '<p class="muted">저장 시각 ' +
-            new Date(record.signed_at).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' }) +
-            ' (한국 시간)</p><p class="muted">확인 감사합니다. 폰을 선생님께 돌려주세요.</p>'
-          : '<div class="clear-line"><span>날짜와 회차를 확인한 뒤 서명합니다.</span><button id="clear-pad">다시 쓰기</button></div><label class="consent"><input type="checkbox" id="confirm-sign"> 위 날짜·회차의 수업을 진행했음을 확인합니다.</label><p class="muted">서명은 수업 내용·저장 시각과 함께 보관됩니다.</p><button class="primary wide" id="save-sign">확인 · 서명 저장</button>')
+            new Date(noShow?.recorded_at || record.signed_at).toLocaleString('ko-KR', {
+              timeZone: 'Asia/Seoul',
+            }) +
+            ' (한국 시간)</p><p class="muted">' +
+            (noShow
+              ? '노쇼는 다짐 출석 대조에서 별도로 구분합니다.'
+              : '확인 감사합니다. 폰을 선생님께 돌려주세요.') +
+            '</p>'
+          : '<div class="clear-line" id="sign-tools"><span>날짜와 회차를 확인한 뒤 서명합니다.</span><button id="clear-pad">다시 쓰기</button></div><label class="consent"><input type="checkbox" id="confirm-sign"> <span id="confirm-label">위 날짜·회차의 수업을 진행했음을 확인합니다.</span></label><p class="muted">서명은 수업 내용·저장 시각과 함께 보관됩니다.</p><button class="primary wide" id="save-sign">확인 · 서명 저장</button>')
       : '') +
     '<p class="form-error" id="sign-error"></p><button class="text-button" id="reload-sign">저장 상태 다시 확인</button><div class="member-return"><button id="show-return" class="text-button">홈으로 돌아가기</button>' +
     (extendedLessons
@@ -3104,7 +3094,7 @@ async function showMember(r) {
   }
   if (canvas) {
     draw();
-    if (!record) {
+    if (!completed) {
       canvas.onpointerdown = (e) => {
         if (e.pointerType === 'mouse' && e.button !== 0) return;
         e.preventDefault();
@@ -3144,9 +3134,21 @@ async function showMember(r) {
           await api('/member-mode/sign', {
             method: 'POST',
             key,
-            body: { version: r.version, snapshot: r.snapshot, confirmed: true, strokes },
+            body: {
+              version: r.version,
+              snapshot: r.snapshot,
+              confirmed: true,
+              strokes: $('#no-show')?.checked ? [] : strokes,
+              ...($('#no-show')?.checked ? { noShow: true } : {}),
+            },
           });
           await showMember(await api('/member-mode'));
+          if (extendedLessons) {
+            const savedLesson = memberState.lessonId;
+            memberReturnTimer = setTimeout(() => {
+              if (memberState?.lessonId === savedLesson) act(leaveMemberMode);
+            }, 1500);
+          }
         } catch (e) {
           $('#sign-error').textContent = e.message;
           button.disabled = false;
@@ -3154,6 +3156,21 @@ async function showMember(r) {
       };
     }
   }
+  if ($('#no-show'))
+    $('#no-show').onchange = (e) => {
+      const checked = e.target.checked;
+      canvas.hidden = checked;
+      $('#sign-tools').hidden = checked;
+      host.querySelector('.signature-label').textContent = checked
+        ? '회원 불참으로 서명을 생략합니다.'
+        : '아래 칸에 손가락으로 서명해주세요';
+      $('#confirm-sign').checked = false;
+      $('#confirm-label').textContent = checked
+        ? '노쇼 1회 차감·수업료 정상 반영을 확인합니다.'
+        : '위 날짜·회차의 수업을 진행했음을 확인합니다.';
+      $('#save-sign').textContent = checked ? '확인 · 노쇼 저장' : '확인 · 서명 저장';
+      if (!checked) draw();
+    };
   $('#reload-sign').onclick = () => act(async () => showMember(await api('/member-mode')));
   $('#show-return').onclick = () => {
     if (extendedLessons) return act(leaveMemberMode);
@@ -3248,9 +3265,7 @@ async function boot() {
       throw e;
     }
     if (user.mustChange) return passwordPage(true);
-    if (user.readOnly && user.memberMode)
-      await api('/member-mode/exit', { method: 'POST', body: {} });
-    else if (user.memberMode) return showMember(await api('/member-mode'));
+    if (user.memberMode) return showMember(await api('/member-mode'));
     await initialize();
   } catch (e) {
     $('#app').innerHTML =

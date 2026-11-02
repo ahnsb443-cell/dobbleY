@@ -180,7 +180,7 @@ export async function addSale(s, a, b) {
 const unresolved = (rows) =>
   rows.filter(
     (r) =>
-      r.kind !== 'matched' &&
+      !['matched', 'noshow'].includes(r.kind) &&
       !r.reviewed &&
       !['source-reserved', 'source-cancelled', 'source-absent'].includes(r.kind),
   );
@@ -215,7 +215,10 @@ export async function payrollAction(s, a, pid, m, b) {
     const warning = {
       unconfirmed: calc.unconfirmed,
       unresolved: unresolved(comparison).length,
-      sourceMissing: trainer({ profile: calc.profile }) && calc.lessons > 0 && !source.length,
+      sourceMissing:
+        trainer({ profile: calc.profile }) &&
+        calc.lines.some((l) => l.signature !== 'noshow') &&
+        !source.length,
     };
     if (
       target === 'approved' &&
