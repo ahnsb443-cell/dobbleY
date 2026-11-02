@@ -1407,3 +1407,75 @@ test(
     );
   },
 );
+
+test(
+  '기존 잔여 고정료와 대표 승인 공급가 신규 상품은 동일 회원 안에서 분리 정산',
+  { skip: !enabled, timeout: 120000 },
+  async () => {
+    const { importBalances } = await import('../firebase/balances.mjs');
+    const svc = services('demo-approved-supply-' + randomBytes(4).toString('hex')),
+      a = { id: 'admin', role: 'admin' },
+      run = (fn) => atomic(svc.db, fn),
+      read = () => new Store(svc.db);
+    const p = await run((s) =>
+      d.addPerson(s, a, { name: '공급가 검증 강사', profile: 'morning', hireMonth: '2026-10' }),
+    );
+    await run((s) =>
+      importBalances(s, a, {
+        asOf: '2026-11-02',
+        batch: 'approved-supply-test',
+        rows: [
+          {
+            row: 1,
+            name: '부가세 협의 회원',
+            instructor: p.name,
+            category: 'pt',
+            quantity: 44,
+            remaining: 2,
+            fixedFee: 20000,
+          },
+        ],
+      }),
+    );
+    const member = (await read().query('members'))[0],
+      old = (await read().query('contracts'))[0];
+    const added = await run((s) =>
+      d.addContract(s, a, {
+        memberId: member.id,
+        paidDate: '2026-11-02',
+        startDate: '2026-11-02',
+        category: 'pt',
+        saleType: 'renew',
+        amount: 3000000,
+        vatIncluded: false,
+        quantity: 50,
+        paymentConfirmed: true,
+        externalRef: 'approved-50-lessons',
+      }),
+    );
+    assert.equal(added.amount, 3000000);
+    assert.equal(added.amount / added.quantity, 60000);
+    assert.equal(added.amount_basis, 'supply');
+    assert.equal(added.fixed_fee, null);
+    assert.equal((await read().query('members')).length, 1);
+    assert.equal(
+      (await d.progress(read(), old)).remaining + (await d.progress(read(), added)).remaining,
+      52,
+    );
+    const sales = await read().query('sales');
+    assert.equal(sales.length, 1);
+    assert.equal(sales[0].amount, 3000000);
+    assert.equal((await d.calculate(read(), p, '2026-11')).renewSales, 3000000);
+    await run((s) => d.addLesson(s, a, { contractId: old.id, date: '2026-11-02', time: '10:00' }));
+    await run((s) =>
+      d.addLesson(s, a, { contractId: added.id, date: '2026-11-02', time: '11:00' }),
+    );
+    const result = await d.calculate(read(), p, '2026-11');
+    assert.equal(result.lines.find((l) => l.contractId === old.id).unit, 20000);
+    assert.equal(
+      result.lines.find((l) => l.contractId === added.id).unit,
+      Math.round((60000 * result.rate) / 100),
+    );
+    assert.equal((await d.salesTotals(read(), '2026-11')).pt, 3000000);
+  },
+);
