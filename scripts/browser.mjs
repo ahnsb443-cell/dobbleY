@@ -203,16 +203,20 @@ async function fixedFeeScenario(admin) {
   await admin.locator('#month').fill(month);
   await admin.locator('#month').dispatchEvent('change');
   await navigate(admin, 'members');
-  await admin.locator('#new-registration').click();
-  await admin.locator('[name=name]').fill('고정 이만원 회원');
-  await admin.locator('[name=personId]').selectOption(person.id);
-  await admin.locator('[name=paidDate]').fill(month + '-01');
-  await admin.locator('[name=startDate]').fill(month + '-01');
-  await admin.locator('[name=amount]').fill('0');
-  await admin.locator('[name=quantity]').fill('36');
-  await admin.locator('[name=fixedFee]').fill('20000');
-  await clickSubmit(admin);
-  await closed(admin);
+  const seeded = await request(admin, '/registrations', 'POST', {
+    name: '고정 이만원 회원',
+    personId: person.id,
+    paidDate: month + '-01',
+    startDate: month + '-01',
+    amount: 0,
+    quantity: 36,
+    category: 'pt',
+    saleType: 'new',
+    fixedFee: 20000,
+  });
+  assert.equal(seeded.status, 200);
+  await navigate(admin, 'members');
+  assert.equal(await admin.locator('#new-registration, [data-renew]').count(), 0);
   const member = (await request(admin, '/members?q=' + encodeURIComponent('고정 이만원 회원'))).body
     .items[0];
   const contract = (await request(admin, '/members/' + member.id)).body.contracts[0];
@@ -300,16 +304,19 @@ async function extendedScenario(admin, browser) {
     ['듀엣 둘', '2200000'],
   ]) {
     await navigate(page, 'members');
-    await page.locator('#new-registration').click();
-    await page.locator('[name=name]').fill(name);
-    await page.locator('[name=paidDate]').fill(month + '-01');
-    await page.locator('[name=startDate]').fill(month + '-01');
-    await page.locator('[name=amount]').fill(amount);
-    await page.locator('[name=quantity]').fill('10');
-    await page.locator('[name=category]').selectOption('pilates');
-    assert.equal(await page.locator('[name=vatIncluded]').inputValue(), 'true');
-    await clickSubmit(page);
-    await closed(page);
+    await checked(admin, '/registrations', 'POST', {
+      name,
+      personId: mixed.id,
+      paidDate: month + '-01',
+      startDate: month + '-01',
+      amount: Number(amount),
+      quantity: 10,
+      category: 'pilates',
+      saleType: 'new',
+      vatIncluded: true,
+    });
+    await navigate(page, 'members');
+    assert.equal(await page.locator('#new-registration, [data-renew]').count(), 0);
     const member = (await checked(page, '/members?q=' + encodeURIComponent(name))).items[0];
     const contract = (await checked(page, '/members/' + member.id)).contracts[0];
     assert.equal(contract.amount, Math.round(Number(amount) / 1.1));
@@ -546,38 +553,46 @@ try {
   await teacher.waitForSelector('.member-card');
   assert.equal(await teacher.locator('[data-view=people]').count(), 0);
   assert.equal(await teacher.locator('.member-card').count(), 10);
-  await teacher.locator('#new-registration').click();
-  await teacher.locator('[name=name]').fill('가상 신규회원');
-  await teacher.locator('[name=paidDate]').fill('2026-10-02');
-  await teacher.locator('[name=startDate]').fill('2026-10-02');
-  await teacher.locator('[name=amount]').fill('3000000');
-  await teacher.locator('[name=vatIncluded]').selectOption('false');
-  await teacher.locator('[name=quantity]').fill('30');
+  assert.equal(await teacher.locator('#new-registration, [data-renew]').count(), 0);
+  const seeded = await request(admin, '/registrations', 'POST', {
+    name: '가상 신규회원',
+    personId: pid,
+    paidDate: '2026-10-02',
+    startDate: '2026-10-02',
+    amount: 3000000,
+    quantity: 30,
+    category: 'pt',
+    saleType: 'new',
+    vatIncluded: false,
+  });
+  assert.equal(seeded.status, 200);
+  await navigate(teacher, 'members');
+  await teacher.waitForSelector('.member-card:nth-child(11)');
   await snap(
     teacher,
-    '3. 신규 회원 1명 등록',
-    '신규 회원만 이름을 입력합니다. 공급가액 300만원·30회를 저장하면 회원 11명, 월 신규 매출 300만원이 됩니다. 회원 생성과 계약·매출은 한 트랜잭션으로 저장됩니다.',
+    '3. 반영된 PT 회원 선택',
+    '검증용 추가 회원 자료를 관리자 API로 준비했습니다. 선생님은 회원권·결제를 다시 입력하지 않고 담당 회원을 선택합니다.',
   );
-  await clickSubmit(teacher);
-  await closed(teacher);
+  const firstMember = (await request(admin, '/members?q=' + encodeURIComponent('가상 회원01'))).body
+    .items[0];
+  const updated = await request(admin, '/registrations', 'POST', {
+    memberId: firstMember.id,
+    paidDate: '2026-10-03',
+    startDate: '2026-10-03',
+    amount: 2000000,
+    quantity: 20,
+    category: 'pt',
+    saleType: 'renew',
+    vatIncluded: false,
+  });
+  assert.equal(updated.status, 200);
+  await navigate(teacher, 'members');
   assert.equal(await teacher.locator('.member-card').count(), 11);
-  const first = teacher
-    .locator('.member-card')
-    .filter({ has: teacher.getByRole('heading', { name: '가상 회원01', exact: true }) });
-  await first.locator('[data-renew]').click();
-  await teacher.locator('[name=paidDate]').fill('2026-10-03');
-  await teacher.locator('[name=startDate]').fill('2026-10-03');
-  await teacher.locator('[name=amount]').fill('2000000');
-  await teacher.locator('[name=vatIncluded]').selectOption('false');
-  await teacher.locator('[name=quantity]').fill('20');
   await snap(
     teacher,
-    '4. 기존 회원 추가 결제',
-    '회원01을 선택해 200만원·20회권을 추가합니다. 회원 수는 11명 그대로이며 기존 30회권 잔여와 새 20회권을 섞지 않습니다. 월 신규+추가 매출 500만원으로 오전파트 50%가 적용됩니다.',
+    '4. 잔여·정산 기준 유지',
+    '다짐에서 제공된 추가 수업 기준도 같은 회원에 연결합니다. 선생님 화면에는 추가 결제 입력 동선이 없습니다.',
   );
-  await clickSubmit(teacher);
-  await closed(teacher);
-  assert.equal(await teacher.locator('.member-card').count(), 11);
   await record(teacher, context, '가상 회원01', '2026-10-07', true);
   await record(teacher, context, '가상 신규회원', '2026-10-08');
   await navigate(teacher, 'payroll');

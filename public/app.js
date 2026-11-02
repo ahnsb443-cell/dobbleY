@@ -36,7 +36,7 @@ let user = null,
   installPrompt = null;
 const titles = {
   dashboard: '운영 현황',
-  members: '회원 · 결제',
+  members: '담당 회원 · PT 체크',
   lessons: '수업 · 회원 서명',
   groups: '그룹레슨 · 시간급',
   payroll: '월별 급여 정산',
@@ -728,10 +728,10 @@ async function duetForm() {
     '듀엣 수업 기록',
     field('첫 번째 회원 이름 검색', 'firstSearch', 'search', '', 'autocomplete="off"') +
       select('첫 번째 회원', 'firstMember', '') +
-      select('첫 번째 회원권', 'firstContract', '') +
+      select('첫 번째 회원의 수업 기준', 'firstContract', '') +
       field('두 번째 회원 이름 검색', 'secondSearch', 'search', '', 'autocomplete="off"') +
       select('두 번째 회원', 'secondMember', '') +
-      select('두 번째 회원권', 'secondContract', '') +
+      select('두 번째 회원의 수업 기준', 'secondContract', '') +
       field('수업일', 'date', 'date', today(), 'max="' + today() + '"') +
       field('시작 시간', 'time', 'time', '10:00') +
       '<p class="form-note">같은 선생님·같은 종목의 두 회원권을 선택합니다. 각 회원의 횟수는 1회씩 차감하고, 비율제 단가에는 지급률을 곱하고 고정 수업료는 그대로 지급합니다. 서명은 회원마다 받습니다.</p>',
@@ -1482,11 +1482,11 @@ function payrollContent() {
 }
 function membersContent() {
   return (
-    '<section class="panel"><div class="panel-head"><div><h3>회원별 등록과 잔여횟수 <span class="tag">이 페이지 ' +
+    '<section class="panel"><div class="panel-head"><div><h3>담당 회원과 PT 잔여횟수 <span class="tag">이 페이지 ' +
     (data.items || []).length +
-    '명</span></h3><p>기존 회원은 선택만 하고, 추가 결제는 별도 회원권으로 연결합니다.</p></div><div class="actions">' +
-    (isAdmin() ? '<button class="secondary" id="bulk-import">기존 회원 일괄 등록</button>' : '') +
-    '<button class="primary" id="new-registration">＋ 신규 회원 · PT</button></div></div><div class="toolbar"><input id="member-search" placeholder="회원 이름 검색" aria-label="회원 이름 검색"><button class="secondary" id="member-search-button">검색</button></div><div class="member-grid">' +
+    '명</span></h3><p>다짐 CRM 자료를 기준으로 회원을 선택하고 수업·서명을 기록합니다.</p></div><div class="actions">' +
+    (isAdmin() ? '<button class="secondary" id="bulk-import">다짐 자료 반영</button>' : '') +
+    '</div></div><div class="toolbar"><input id="member-search" placeholder="회원 이름 검색" aria-label="회원 이름 검색"><button class="secondary" id="member-search-button">검색</button></div><div class="member-grid">' +
     (data.items || [])
       .map(
         (m) =>
@@ -1500,16 +1500,17 @@ function membersContent() {
           m.remaining +
           '<small>회</small></b></div><div class="actions"><button class="secondary" data-contracts="' +
           m.id +
-          '">회원권</button><button class="secondary" data-renew="' +
+          '">잔여 · 정산 기준</button></div><button class="primary wide" data-complete="' +
           m.id +
-          '">추가 결제</button></div><button class="primary wide" data-complete="' +
-          m.id +
-          '">수업 완료 · 회원 서명</button></article>',
+          '">PT 수업 체크 · 서명</button></article>',
       )
       .join('') +
     '</div>' +
     (!(data.items || []).length
-      ? empty('등록된 회원이 없습니다', '신규 등록 또는 기존 회원 일괄 가져오기로 시작하세요.')
+      ? empty(
+          '담당 회원이 없습니다',
+          '관리자가 다짐 CRM의 PT 자료를 반영하면 회원을 선택할 수 있습니다.',
+        )
       : '') +
     pager(data.next) +
     '</section>'
@@ -1762,98 +1763,42 @@ function auditContent() {
     '</section>'
   );
 }
-function registrationForm(existing = null) {
-  const b = existing
-    ? '<div class="notice inner"><b>' + esc(existing.name) + ' · 기존 회원 추가 결제</b></div>'
-    : field('신규 회원 이름', 'name', 'text', '', 'maxlength="80"') +
-      (isAdmin() ? select('담당 선생님', 'personId', personOptions('', true)) : '');
-  modal(
-    existing ? '기존 회원 추가 결제' : '신규 회원 · PT 등록',
-    b +
-      field('결제일', 'paidDate', 'date', today()) +
-      field('수업 시작일', 'startDate', 'date', today()) +
-      field('결제 금액 (원)', 'amount', 'number', '', 'min="0" step="1"') +
-      select(
-        '금액 기준',
-        'vatIncluded',
-        option('true', 'VAT 포함 결제금액 (÷1.1)') + option('false', 'VAT 제외 공급가액'),
-      ) +
-      (extendedLessons && isAdmin()
-        ? '<label class="field">고정 수업료 (회당 원, 비우면 지급률 적용)<input name="fixedFee" type="number" min="1" max="1000000" step="1" placeholder="예: 20000"></label><p class="form-note">고정 수업료는 월 매출 지급률을 곱하지 않고 회당 지급합니다. 결제금액·매출과 별개입니다.</p>'
-        : '') +
-      field('등록 횟수', 'quantity', 'number', 20, 'min="1" max="10000" step="1"') +
-      select('수업 종류', 'category', option('pt', 'PT') + option('pilates', '개인 필라테스')) +
-      '<p class="form-note">기존 회원 추가 결제는 회원을 다시 만들지 않습니다. 이전 회원권 잔여와 새 계약의 단가·횟수를 각각 유지합니다.</p>',
-    async (f, key) => {
-      await api('/registrations', {
-        method: 'POST',
-        key,
-        body: {
-          name: f.get('name'),
-          personId: f.get('personId') || user.personId,
-          memberId: existing?.id,
-          paidDate: f.get('paidDate'),
-          startDate: f.get('startDate'),
-          amount: Number(f.get('amount')),
-          quantity: Number(f.get('quantity')),
-          vatIncluded: f.get('vatIncluded') === 'true',
-          category: f.get('category'),
-          saleType: existing ? 'renew' : 'new',
-          ...(extendedLessons && isAdmin()
-            ? { fixedFee: f.get('fixedFee') ? Number(f.get('fixedFee')) : null }
-            : {}),
-        },
-      });
-      await load();
-      toast('회원과 결제를 저장했습니다.');
-    },
-  );
-}
 async function memberContracts(key) {
   const r = await api('/members/' + key);
   modal(
-    r.member.name + ' · 회원권',
+    r.member.name + ' · 잔여 · 정산 기준',
     table(
-      ['등록 / 결제', '구분', '공급가액', '등록 / 사용 / 잔여', '상태'],
+      ['수업 구분', '전체 / 진행 / 잔여', '회당 공급단가', '지급 기준'],
       r.contracts.map(
         (c) =>
           '<tr><td>' +
-          (c.migration_baseline ? '이관 기준 ' + c.carry_date : c.start_date) +
-          '<small>결제 ' +
-          (c.paid_date || '원본 날짜 미제공') +
+          esc(c.source_product || (c.category === 'pilates' ? '필라테스' : 'PT')) +
+          '<small>기준 ' +
+          (c.carry_date || c.start_date) +
           '</small></td><td>' +
-          { new: '신규', renew: '추가 결제', migration: '기존 회원권 이관' }[c.sale_type] +
-          '</td><td>' +
-          (c.amount_unknown ? '결제금액 미제공' : money(c.amount)) +
-          (extendedLessons
-            ? '<small>' +
-              (c.fixed_fee != null ? '고정 회당 ' + money(c.fixed_fee) + '원' : '월 지급률 적용') +
-              '</small>'
-            : '') +
-          (extendedLessons && isAdmin()
-            ? '<button type="button" class="text-button" data-contract-fee="' +
-              c.id +
-              '">수업료 설정</button>'
-            : '') +
-          '</td><td>' +
           c.quantity +
           ' / ' +
           c.used +
           ' / ' +
           c.remaining +
           '</td><td>' +
-          (c.active ? '활성' : '종료') +
-          (isAdmin() && c.active
-            ? ' <button type="button" class="text-button" data-close-contract="' +
+          (c.amount_unknown ? '원금 미제공' : money(c.amount / c.quantity) + '원') +
+          '</td><td>' +
+          (c.fixed_fee != null
+            ? '고정 회당 ' + money(c.fixed_fee) + '원'
+            : '월 매출별 지급률 적용') +
+          (extendedLessons && isAdmin()
+            ? '<br><button type="button" class="text-button" data-contract-fee="' +
               c.id +
-              '">종료</button>'
+              '">수업료 설정</button>'
             : '') +
+          (!c.active ? '<small>수업 대상 종료</small>' : '') +
           '</td></tr>',
       ),
     ) +
       '<p class="form-note">회원번호 #' +
       r.member.id.slice(0, 6) +
-      ' · 같은 이름도 다른 ID로 구분합니다.</p>' +
+      ' · 다짐 CRM 자료에 따른 수업 차감·급여 계산 기준입니다. 회원권을 다시 기입하지 않아도 됩니다.</p>' +
       (isAdmin()
         ? '<button class="secondary" type="button" id="transfer-member">담당자 인수인계</button>'
         : ''),
@@ -1878,8 +1823,8 @@ async function memberContracts(key) {
         button.onclick = () => {
           const c = r.contracts.find((c) => c.id === button.dataset.contractFee);
           modal(
-            '회원권 수업료 설정',
-            '<p class="form-note">이 회원권의 전체 수업에 적용됩니다. 제출·승인·마감된 수업이 있으면 변경할 수 없습니다.</p><label class="field">회당 고정 수업료 (비우면 지급률 적용)<input name="fixedFee" type="number" min="1" max="1000000" step="1" value="' +
+            'PT 정산 수업료 설정',
+            '<p class="form-note">선택한 수업 기준에 연결된 전체 수업에 적용됩니다. 제출·승인·마감된 수업이 있으면 변경할 수 없습니다.</p><label class="field">회당 고정 수업료 (비우면 지급률 적용)<input name="fixedFee" type="number" min="1" max="1000000" step="1" value="' +
               (c.fixed_fee ?? '') +
               '"></label>' +
               field('변경 사유', 'reason'),
@@ -1894,7 +1839,7 @@ async function memberContracts(key) {
                 },
               });
               await load();
-              toast('회원권 수업료를 저장했습니다.');
+              toast('PT 정산 수업료를 저장했습니다.');
             },
           );
         };
@@ -1906,15 +1851,16 @@ async function memberContracts(key) {
 async function completeForm(key) {
   const r = await api('/members/' + key),
     available = r.contracts.filter((c) => c.active && c.remaining > 0);
-  if (!available.length) return toast('잔여 회원권이 없습니다. 추가 결제를 등록하세요.');
+  if (!available.length)
+    return toast('잔여 수업이 없습니다. 관리자에게 다짐 CRM 잔여 자료 확인을 요청하세요.');
   modal(
     r.member.name + ' · 수업 기록',
     select(
-      '사용할 회원권',
+      '수업 차감 기준',
       'contractId',
       available
         .map((c) =>
-          option(c.id, c.start_date + ' · ' + c.quantity + '회권 · 잔여 ' + c.remaining + '회'),
+          option(c.id, c.start_date + ' · ' + c.quantity + '회 등록 · 잔여 ' + c.remaining + '회'),
         )
         .join(''),
     ) +
@@ -2770,18 +2716,10 @@ function bindPage() {
     view = 'source';
     await load();
   });
-  on('#new-registration', async () => registrationForm());
   on('#bulk-import', bulkImport);
   on('#member-search-button', async () =>
     load('&q=' + encodeURIComponent($('#member-search').value)),
   );
-  document
-    .querySelectorAll('[data-renew]')
-    .forEach(
-      (b) =>
-        (b.onclick = () =>
-          act(async () => registrationForm((await api('/members/' + b.dataset.renew)).member))),
-    );
   document
     .querySelectorAll('[data-contracts]')
     .forEach((b) => (b.onclick = () => act(() => memberContracts(b.dataset.contracts))));
