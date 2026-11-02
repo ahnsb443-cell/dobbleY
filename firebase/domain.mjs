@@ -436,6 +436,8 @@ export async function listLessons(s, a, url) {
       member: (await required(s, 'members', l.member_id)).name,
       instructor: (await required(s, 'people', l.person_id)).name,
       quantity: c.quantity,
+      contract_start_date: c.start_date,
+      ordinal: l.status === 'active' ? (await snapshot(s, l.id))?.ordinal || null : null,
       amount: c.amount,
       category: c.category,
       confirmation: await confirmation(s, l),

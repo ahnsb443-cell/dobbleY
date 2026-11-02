@@ -1253,3 +1253,57 @@ test(
     }
   },
 );
+
+test(
+  '그룹 강사 단가는 본인만 조회: 타인 지정·미연결 계정·타인 단가 기록 차단',
+  { skip: !enabled, timeout: 120000 },
+  async () => {
+    const svc = services('demo-private-group-rates-' + randomBytes(4).toString('hex')),
+      a = { id: 'admin', role: 'admin' },
+      run = (fn) => atomic(svc.db, fn),
+      read = () => new Store(svc.db);
+    const people = [];
+    for (const name of ['그룹 강사 A', '그룹 강사 B'])
+      people.push(
+        await run((s) => d.addPerson(s, a, { name, profile: 'group', hireMonth: '2026-01' })),
+      );
+    const rates = [];
+    for (const [i, p] of people.entries())
+      rates.push(
+        await run((s) =>
+          c.createGroupRate(s, a, p.id, {
+            name: '그룹 필라테스',
+            effectiveDate: '2026-01-01',
+            hourlyRate: i === 0 ? 35000 : 90000,
+            billableMinutes: 60,
+            reason: '단가 분리 검증',
+          }),
+        ),
+      );
+    const user = { id: 'teacher-a', role: 'employee', person_id: people[0].id };
+    assert.deepEqual(
+      (await c.groupRates(read(), user)).map((r) => r.id),
+      [rates[0].id],
+    );
+    assert.deepEqual(
+      (await c.groupRates(read(), user, people[1].id)).map((r) => r.id),
+      [rates[0].id],
+    );
+    assert.equal((await c.groupRates(read(), a)).length, 2);
+    await assert.rejects(
+      c.groupRates(read(), { id: 'unlinked', role: 'employee' }),
+      (e) => e.status === 403,
+    );
+    await assert.rejects(
+      run((s) =>
+        c.addGroupLesson(s, user, {
+          rateId: rates[1].id,
+          date: '2026-11-01',
+          time: '10:00',
+          participants: 1,
+        }),
+      ),
+      (e) => e.status === 403,
+    );
+  },
+);

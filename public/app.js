@@ -237,6 +237,91 @@ function contractCalculationNotes(r) {
     ? '<p class="form-note contract-calculation">' + notes.join('<br>') + '</p>'
     : '';
 }
+function monthlyMemberReview(r) {
+  const groups = new Map();
+  for (const l of data.lessonReview || []) {
+    if (!groups.has(l.member_id)) groups.set(l.member_id, { name: l.member, items: [] });
+    groups.get(l.member_id).items.push(l);
+  }
+  return (
+    '<section class="panel monthly-member-review" id="monthly-member-review"><h2>당월 회원별 서명 확인</h2><p class="trainer-muted">' +
+    esc(month) +
+    ' · ' +
+    groups.size +
+    '명 / 회원 확인 ' +
+    (data.lessonReview || []).length +
+    '건<br>듀엣은 회원별로 표시합니다.' +
+    (r.frozen ? ' 서명 상태는 현재 기준이며 확정 정산금은 유지됩니다.' : '') +
+    '</p>' +
+    ([...groups.values()]
+      .sort((a, b) => a.name.localeCompare(b.name, 'ko'))
+      .map((g) => {
+        const signed = g.items.filter((l) => l.confirmation.state === 'signed').length,
+          noshow = g.items.filter((l) => l.confirmation.state === 'noshow').length;
+        return (
+          '<details open class="monthly-member"><summary><b>' +
+          esc(g.name) +
+          '</b><small>서명 ' +
+          signed +
+          ' · 노쇼 ' +
+          noshow +
+          ' · 확인 필요 ' +
+          (g.items.length - signed - noshow) +
+          '</small></summary>' +
+          g.items
+            .sort(
+              (a, b) =>
+                a.date.localeCompare(b.date) ||
+                a.time.localeCompare(b.time) ||
+                a.id.localeCompare(b.id),
+            )
+            .map(
+              (l) =>
+                '<article class="monthly-member-lesson"><div><b>' +
+                l.date.slice(5).replace('-', '.') +
+                ' ' +
+                esc(l.time) +
+                '</b><small>' +
+                (l.ordinal ? l.ordinal + '회차 · ' : '') +
+                (l.session_id ? '듀엣' : l.category === 'pilates' ? '필라테스' : 'PT') +
+                ' ' +
+                l.quantity +
+                '회 상품 · 시작 ' +
+                esc((l.contract_start_date || '').slice(5)) +
+                '</small></div><button class="text-button" data-history="' +
+                l.id +
+                '">' +
+                {
+                  signed: '서명 보기',
+                  noshow: '노쇼 내역',
+                  unsigned: '미서명',
+                  stale: '재서명 필요',
+                }[l.confirmation.state] +
+                '</button></article>',
+            )
+            .join('') +
+          '</details>'
+        );
+      })
+      .join('') || '<p class="trainer-muted">선택한 월에 기록된 개인·듀엣 수업이 없습니다.</p>') +
+    '</section>'
+  );
+}
+async function loadMonthlyLessonReview(selectedMonth) {
+  const items = new Map();
+  let after = null;
+  do {
+    const page = await api(
+      '/lessons?month=' +
+        selectedMonth +
+        '&limit=100' +
+        (after ? '&after=' + encodeURIComponent(after) : ''),
+    );
+    for (const l of page.items) items.set(l.id, l);
+    after = page.next;
+  } while (after);
+  return [...items.values()];
+}
 function trainerPayrollContent() {
   const r = (data.items || []).find((r) => r.personId === user.personId);
   if (!r) return empty('정산할 자료가 없습니다', '선택한 월의 근무 기간을 확인하세요.');
@@ -301,6 +386,7 @@ function trainerPayrollContent() {
     '회 · ' +
     money(r.groupCommission || 0) +
     '원</div></section>' +
+    (extendedLessons && isTrainer() ? monthlyMemberReview(r) : '') +
     '<button class="secondary wide" data-payroll="' +
     r.personId +
     '">개인·듀엣 상세 · 서명 확인</button>' +
@@ -548,9 +634,11 @@ async function quickRecordForm() {
   );
 }
 
+const ownGroupRates = (items) =>
+  isAdmin() ? items : items.filter((r) => r.person_id === user.personId);
 function groupContent() {
   const items = data.items || [],
-    rates = data.rates?.items || [];
+    rates = ownGroupRates(data.rates?.items || []);
   return (
     '<section class="panel"><div class="panel-head"><div><h3>그룹레슨 · 시간당 수업료</h3><p>설정 단가 × 정산 인정시간으로 계산하며, 참여인원 0명은 50%를 지급합니다.</p></div><div class="actions">' +
     (isAdmin() ? '<button class="secondary" id="new-group-rate">선생님별 단가 설정</button>' : '') +
@@ -646,12 +734,12 @@ function groupRateForm() {
   );
 }
 async function groupLessonForm() {
-  const rates = (await api('/group-rates')).items;
+  const rates = ownGroupRates((await api('/group-rates')).items);
   if (!rates.length) return toast('관리자가 선생님별 그룹레슨 단가를 먼저 설정해주세요.');
   modal(
     '그룹레슨 기록',
     field('수업일', 'date', 'date', today(), 'max="' + today() + '"') +
-      select('적용 단가 / 수업', 'rateId', '') +
+      select(isAdmin() ? '적용 단가 / 수업' : '내 수업 선택', 'rateId', '') +
       field('시작 시간', 'time', 'time', '10:00') +
       field(
         '참여인원 (0명은 하프 페이)',
@@ -692,14 +780,16 @@ async function groupLessonForm() {
           .map((r) =>
             option(
               r.id,
-              (people.find((p) => p.id === r.person_id)?.name || '') +
-                ' · ' +
-                r.name +
-                ' · 시간당 ' +
-                money(r.hourly_rate) +
-                '원 / ' +
-                r.billable_minutes +
-                '분',
+              isAdmin()
+                ? (people.find((p) => p.id === r.person_id)?.name || '') +
+                    ' · ' +
+                    r.name +
+                    ' · 시간당 ' +
+                    money(r.hourly_rate) +
+                    '원 / ' +
+                    r.billable_minutes +
+                    '분'
+                : r.name + ' · ' + r.billable_minutes + '분',
             ),
           )
           .join('');
@@ -1241,8 +1331,15 @@ async function load(extra = '') {
         isAdmin() && extendedLessons ? api('/sales/summary?month=' + month) : Promise.resolve(null),
       ]);
       r = { ...payroll, recent, reviewSummary, salesSummary };
-    } else if (view === 'payroll') r = await api('/payroll?month=' + month);
-    else if (view === 'members') r = await api('/members?limit=20' + extra);
+    } else if (view === 'payroll') {
+      if (extendedLessons && !isAdmin() && isTrainer()) {
+        const [payroll, lessonReview] = await Promise.all([
+          api('/payroll?month=' + month),
+          loadMonthlyLessonReview(month),
+        ]);
+        r = { ...payroll, lessonReview };
+      } else r = await api('/payroll?month=' + month);
+    } else if (view === 'members') r = await api('/members?limit=20' + extra);
     else if (view === 'lessons')
       r = await api(
         '/lessons?month=' +

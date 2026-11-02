@@ -52,7 +52,10 @@ export async function createGroupRate(s, a, pid, b) {
   return r;
 }
 export async function groupRates(s, a, pid = null) {
-  if (a.role !== 'admin') pid = a.person_id;
+  if (a.role !== 'admin') {
+    if (!a.person_id) fail(403, '본인 구성원에 연결된 계정으로 단가를 조회하세요.');
+    pid = a.person_id;
+  }
   if (pid) await person(s, a, pid);
   return s.query('group_rates', pid ? [['person_id', '==', pid]] : []);
 }

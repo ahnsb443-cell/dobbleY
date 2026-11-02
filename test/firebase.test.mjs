@@ -150,6 +150,10 @@ test(
         assert.equal(r.body.contract.payment_confirmed, true);
         assert.ok(r.body.contract.payment_confirmed_at);
         c = r.body.contract;
+        assert.equal(
+          (await ok('/contracts/' + c.id + '/lessons', { auth: teacher })).body.items.length,
+          0,
+        );
         assert.deepEqual(
           (
             await ok('/registrations', {

@@ -668,6 +668,14 @@ async function noShowScenario(admin, teacher, context, pid) {
   const lessons = (await request(teacher, '/lessons?month=' + month)).body.items;
   const lesson = lessons.find((l) => l.member === '노쇼 모바일 검증 회원');
   assert.equal(lesson.confirmation.state, 'noshow');
+  await navigate(teacher, 'payroll');
+  await teacher.locator('#monthly-member-review [data-history="' + lesson.id + '"]').waitFor();
+  assert.equal(
+    await teacher
+      .locator('#monthly-member-review [data-history="' + lesson.id + '"]')
+      .textContent(),
+    '노쇼 내역',
+  );
   await navigate(teacher, 'lessons');
   await teacher.locator('[data-history="' + lesson.id + '"]').click();
   await teacher.getByText('노쇼로 처리된 수업입니다.', { exact: true }).waitFor();
@@ -756,8 +764,32 @@ async function extendedScenario(admin, browser) {
   await admin.locator('[name=reason]').fill('시간당 계약');
   await clickSubmit(admin);
   await closed(admin);
+  const privateOther = await checked(admin, '/people', 'POST', {
+    name: '타인 그룹 단가 검증',
+    profile: 'group',
+    hireMonth: '2026-01',
+  });
+  const privateRate = await checked(admin, '/group-rates', 'POST', {
+    personId: privateOther.id,
+    name: '다른 강사 전용 수업',
+    effectiveDate: month + '-01',
+    hourlyRate: 90000,
+    billableMinutes: 60,
+    reason: '타인 단가 숨김 검증',
+  });
+  const privateResponse = await checked(page, '/group-rates?personId=' + privateOther.id);
+  assert.ok(privateResponse.items.every((r) => r.person_id === mixed.id));
+  assert.equal(
+    privateResponse.items.some((r) => r.id === privateRate.id),
+    false,
+  );
   await navigate(page, 'groups');
   await page.locator('#new-group-lesson').click();
+  await page.locator('[name=rateId] option').first().waitFor({ state: 'attached' });
+  assert.equal(await page.locator('[name=rateId] option').count(), 1);
+  const choiceText = await page.locator('[name=rateId]').innerText();
+  assert.doesNotMatch(choiceText, /다른 강사|90,000|35,000|시간당/);
+
   await page.locator('[name=date]').fill(month + '-20');
   await page.locator('[name=date]').dispatchEvent('change');
   await page.locator('[name=time]').fill('18:00');
@@ -1101,6 +1133,18 @@ try {
     '실제 진행을 확인한 뒤 회원02의 10월 9일 수업을 나중에 기록했습니다. 수업일은 9일, 서명 시각은 실제 저장일입니다. 기존 수업이 있으면 중복으로 추가하지 않습니다.',
   );
   await navigate(teacher, 'payroll');
+  if (firebaseMode) {
+    await teacher.locator('#monthly-member-review .monthly-member').nth(2).waitFor();
+    assert.equal(await teacher.locator('#monthly-member-review .monthly-member').count(), 3);
+    assert.equal(await teacher.locator('#monthly-member-review [data-history]').count(), 3);
+    assert.match(await teacher.locator('#monthly-member-review').innerText(), /가상 회원01/);
+    assert.match(await teacher.locator('#monthly-member-review').innerText(), /가상 신규회원/);
+    await teacher.locator('#monthly-member-review').scrollIntoViewIfNeeded();
+    await guideCapture(teacher, '15-monthly-members');
+    await teacher.locator('#monthly-member-review [data-history]').first().click();
+    await teacher.locator('[data-payload]').first().waitFor();
+    await teacher.locator('#modal-x').click();
+  }
   await teacher.locator('[data-payroll]:visible').click();
   await teacher.waitForSelector('#modal .statement');
   assert.match(await teacher.locator('#modal').textContent(), /628,550/);

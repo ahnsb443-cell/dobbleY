@@ -3238,3 +3238,44 @@ body.menu-open {
     height: 38px;
   }
 }
+.monthly-member-review {
+  margin: 14px 0;
+  padding: 18px;
+}
+.monthly-member-review h2 {
+  margin: 0 0 8px;
+  font-size: 19px;
+}
+.monthly-member {
+  border-top: 1px solid #e8eaed;
+  padding: 12px 0;
+}
+.monthly-member summary {
+  cursor: pointer;
+}
+.monthly-member summary small,
+.monthly-member-lesson small {
+  display: block;
+  color: #777;
+  font-size: 12px;
+  margin-top: 4px;
+}
+.monthly-member-lesson {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 0;
+  border-bottom: 1px solid #f1f2f4;
+}
+.monthly-member-lesson > div {
+  min-width: 0;
+}
+.monthly-member-lesson b {
+  font-size: 14px;
+}
+.monthly-member-lesson button {
+  flex-shrink: 0;
+  color: #ff650d;
+  font-size: 12px;
+}
