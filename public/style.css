@@ -3279,3 +3279,20 @@ body.menu-open {
   color: #ff650d;
   font-size: 12px;
 }
+/* Signature paper stays opaque and legible under browser dark/contrast modes. */
+#member-screen,
+.member-sheet,
+.evidence {
+  color-scheme: only light;
+}
+#sign-pad,
+.evidence-canvas {
+  color-scheme: only light;
+  forced-color-adjust: none;
+  background: #fff !important;
+  filter: none;
+  mix-blend-mode: normal;
+  isolation: isolate;
+  print-color-adjust: exact;
+  -webkit-print-color-adjust: exact;
+}

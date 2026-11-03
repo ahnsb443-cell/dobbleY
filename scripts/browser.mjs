@@ -118,6 +118,30 @@ async function returnTeacher(page) {
   } else assert.equal(await page.locator('#return-form').count(), 0);
   await page.waitForFunction(() => document.querySelector('#member-screen').hidden);
 }
+async function checkSignatureContrast(page, selector, ink = true) {
+  const stats = await page.locator(selector).evaluate((canvas) => {
+    const pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+    let transparent = 0,
+      dark = 0;
+    for (let i = 0; i < pixels.length; i += 4) {
+      if (pixels[i + 3] !== 255) transparent++;
+      if (pixels[i] < 80 && pixels[i + 1] < 80 && pixels[i + 2] < 80) dark++;
+    }
+    const css = getComputedStyle(canvas);
+    return {
+      corner: Array.from(pixels.slice(0, 4)),
+      transparent,
+      dark,
+      scheme: css.colorScheme,
+      adjust: css.forcedColorAdjust,
+    };
+  });
+  assert.deepEqual(stats.corner, [255, 255, 255, 255]);
+  assert.equal(stats.transparent, 0);
+  if (ink) assert.ok(stats.dark > 30, 'signature ink remains dark');
+  assert.match(stats.scheme, /light/);
+  assert.equal(stats.adjust, 'none');
+}
 async function record(page, context, name, date, capture = false) {
   if (capture) {
     await navigate(page, 'dashboard');
@@ -146,6 +170,10 @@ async function record(page, context, name, date, capture = false) {
   await page.locator('[name=time]').fill('10:00');
   await clickSubmit(page);
   await page.waitForSelector('#sign-pad');
+  if (process.argv.includes('--dark-signatures')) {
+    await page.emulateMedia({ colorScheme: 'dark', forcedColors: 'active' });
+    await checkSignatureContrast(page, '#sign-pad', false);
+  }
   if (capture) {
     assert.match(await page.locator('.ordinal').textContent(), /5회차/);
     await snap(
@@ -161,6 +189,7 @@ async function record(page, context, name, date, capture = false) {
   }
   await page.locator('#confirm-sign').check();
   await draw(page, context);
+  if (process.argv.includes('--dark-signatures')) await checkSignatureContrast(page, '#sign-pad');
   if (capture)
     await snap(
       page,
@@ -171,6 +200,7 @@ async function record(page, context, name, date, capture = false) {
   await page.waitForFunction(() =>
     document.querySelector('.member-intro')?.textContent.includes('저장 완료'),
   );
+  if (process.argv.includes('--dark-signatures')) await checkSignatureContrast(page, '#sign-pad');
   if (capture)
     await snap(
       page,
@@ -1212,6 +1242,19 @@ try {
     await guideCapture(teacher, '15-monthly-members');
     await teacher.locator('#monthly-member-review [data-history]').first().click();
     await teacher.locator('[data-payload]').first().waitFor();
+    if (process.argv.includes('--dark-signatures')) {
+      await teacher.locator('[data-payload]').first().click();
+      await teacher.waitForFunction(() => {
+        const c = document.querySelector('.evidence-canvas');
+        return c && c.getContext('2d').getImageData(0, 0, 1, 1).data[3] === 255;
+      });
+      await checkSignatureContrast(teacher, '.evidence-canvas');
+      await teacher.emulateMedia({ colorScheme: 'light', forcedColors: 'none' });
+      await checkSignatureContrast(teacher, '.evidence-canvas');
+      console.log(
+        'PASS: opaque white signature paper and dark ink survive dark/forced-colors, save/reopen and original signature viewing.',
+      );
+    }
     await teacher.locator('#modal-x').click();
   }
   await teacher.locator('[data-payroll]:visible').click();

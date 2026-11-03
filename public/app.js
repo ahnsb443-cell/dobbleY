@@ -2347,9 +2347,12 @@ async function showHistory(key) {
 }
 function drawEvidence(canvas, strokes) {
   const c = canvas.getContext('2d');
+  c.fillStyle = '#ffffff';
+  c.fillRect(0, 0, canvas.width, canvas.height);
   c.lineWidth = 3;
   c.lineCap = 'round';
-  c.strokeStyle = '#20242a';
+  c.lineJoin = 'round';
+  c.strokeStyle = '#111111';
   for (const line of strokes) {
     c.beginPath();
     line.forEach(([x, y], i) =>
@@ -3429,11 +3432,13 @@ async function showMember(r) {
     canvas.width = rect.width * (devicePixelRatio || 1);
     canvas.height = rect.height * (devicePixelRatio || 1);
     ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.scale(devicePixelRatio || 1, devicePixelRatio || 1);
-    ctx.lineWidth = 2.5;
+    ctx.lineWidth = 3;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
-    ctx.strokeStyle = '#20242a';
+    ctx.strokeStyle = '#111111';
     for (const line of record?.strokes || strokes) {
       ctx.beginPath();
       line.forEach(([x, y], i) =>
