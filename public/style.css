@@ -3296,3 +3296,138 @@ body.menu-open {
   print-color-adjust: exact;
   -webkit-print-color-adjust: exact;
 }
+
+/* Member handoff: current ticket balance and scoped signature ledger. */
+.member-balance {
+  margin: 24px 0;
+  padding: 24px;
+  border: 2px solid #ff6b19;
+  border-radius: 20px;
+  background: #fff8f2;
+  color: #242424;
+}
+.member-balance > span {
+  font-size: 17px;
+  font-weight: 700;
+}
+.member-balance p {
+  margin: 10px 0;
+  font-size: 18px;
+  line-height: 1.6;
+}
+.member-balance > strong {
+  display: block;
+  color: #d94700;
+  font-size: 64px;
+  line-height: 1.2;
+}
+.member-balance strong small {
+  margin-left: 8px;
+  font-size: 30px;
+}
+.member-balance > small {
+  display: block;
+  line-height: 1.6;
+}
+.member-after {
+  padding: 18px;
+  background: #fff3e8;
+  border-radius: 14px;
+  font-size: 20px;
+  line-height: 1.6;
+}
+.member-after strong {
+  color: #c94300;
+  white-space: nowrap;
+  font-size: 26px;
+}
+#member-history {
+  color: #242424;
+  font-size: 18px;
+  line-height: 1.6;
+}
+#member-history h2 {
+  font-size: 28px;
+  margin-top: 24px;
+}
+#member-history p {
+  overflow-wrap: anywhere;
+}
+#member-history .wide,
+#member-history-open {
+  min-height: 56px;
+  font-size: 18px;
+  white-space: normal;
+  margin: 12px 0;
+}
+.member-history-card {
+  margin: 20px 0;
+  padding: 18px;
+  border: 1px solid #d8d8d8;
+  border-radius: 16px;
+  background: #fff;
+}
+.member-history-card h3 {
+  font-size: 21px;
+}
+.member-history-evidence {
+  margin-top: 16px;
+  border-top: 1px solid #e5e5e5;
+  padding-top: 12px;
+}
+.member-history-evidence small {
+  display: block;
+  font-size: 15px;
+  line-height: 1.6;
+}
+.history-image {
+  margin-top: 14px;
+  border: 1px solid #aaa;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #fff;
+}
+.history-image canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: #fff !important;
+  color-scheme: only light;
+  forced-color-adjust: none;
+}
+.member-history-empty {
+  padding: 24px 0;
+}
+@media (max-width: 380px) {
+  .member-balance {
+    padding: 18px;
+  }
+  .member-balance > strong {
+    font-size: 56px;
+  }
+  .member-balance strong small {
+    font-size: 26px;
+  }
+}
+.member-sheet .member-facts > div {
+  font-size: 17px;
+}
+.member-sheet .member-facts b {
+  font-size: 19px;
+}
+.member-sheet .member-facts .ordinal {
+  font-size: 28px;
+}
+.member-sheet .member-facts .ordinal small {
+  font-size: 16px;
+}
+@media (max-width: 540px) {
+  .member-sheet .member-facts > div {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+  .member-sheet .member-facts b {
+    text-align: left;
+  }
+}

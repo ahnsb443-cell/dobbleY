@@ -170,6 +170,9 @@ export function checkSession(a, path, method) {
       '/api/logout',
       '/api/member-mode',
       '/api/member-mode/sign',
+      ...(method === 'GET'
+        ? ['/api/member-mode/history', '/api/member-mode/history-signature']
+        : []),
       '/api/member-mode/exit',
     ].includes(path) ||
       (path === '/api/member-mode' && method !== 'GET'))

@@ -259,18 +259,22 @@ async function managerRecordScenario(admin) {
   await admin.setViewportSize({ width: 390, height: 844 });
   await admin.locator('#month').fill('2026-11');
   await admin.locator('#month').dispatchEvent('change');
-  async function open() {
+  async function open(time = '18:00') {
     await admin.locator('#quick-record').click();
     await admin.locator('[name=quickPersonId]').waitFor();
     assert.equal(await admin.locator('[name=quickPersonId]').inputValue(), manager.id);
     await admin.locator('#quick-member-search').fill('총괄 수업 회원');
     await admin.locator('[data-quick-member="' + reg.body.member.id + '"]').click();
     await admin.locator('[name=date]').fill('2026-11-01');
-    await admin.locator('[name=time]').fill('18:00');
+    await admin.locator('[name=time]').fill(time);
     await clickSubmit(admin);
     await admin.locator('#sign-pad').waitFor();
   }
   await open();
+  assert.match(await admin.locator('.member-balance').innerText(), /10회 중 0회 사용/);
+  await admin.locator('#member-history-open').click();
+  await admin.getByText('이전 수업·서명 기록이 없습니다.', { exact: true }).waitFor();
+  await admin.locator('#member-history-back').click();
   await returnTeacher(admin);
   assert.equal(
     (await request(admin, '/members/' + reg.body.member.id)).body.contracts[0].remaining,
@@ -288,14 +292,56 @@ async function managerRecordScenario(admin) {
     document.querySelector('.member-intro')?.textContent.includes('저장 완료'),
   );
   await admin.waitForFunction(() => document.querySelector('#member-screen').hidden);
+  await open('18:30');
+  assert.match(await admin.locator('.member-balance').innerText(), /10회 중 1회 사용/);
+  assert.match(await admin.locator('.member-after').innerText(), /잔여 8회/);
+  await admin.locator('#confirm-sign').check();
+  await draw(admin, admin.context());
+  const pixels = await admin.locator('#sign-pad').evaluate((c) => c.toDataURL());
+  await admin.locator('#member-history-open').click();
+  await admin.locator('.member-history-card').waitFor();
+  assert.equal(await admin.locator('#app').isHidden(), true);
+  assert.equal((await request(admin, '/payroll')).status, 403);
+  await admin.getByRole('button', { name: '저장된 서명 보기', exact: true }).first().click();
+  await admin.locator('.history-image canvas').waitFor();
+  await checkSignatureContrast(admin, '.history-image canvas');
+  await admin.locator('#member-history-back').click();
+  assert.equal(await admin.locator('#confirm-sign').isChecked(), true);
+  assert.equal(await admin.locator('#sign-pad').evaluate((c) => c.toDataURL()), pixels);
+  await admin.locator('#member-history-open').click();
+  await admin.evaluate(() => history.back());
+  await admin.waitForFunction(() => document.querySelector('#member-history').hidden);
+  assert.equal(await admin.locator('#confirm-sign').isChecked(), true);
+  assert.equal(await admin.locator('#sign-pad').evaluate((c) => c.toDataURL()), pixels);
+  await admin.setViewportSize({ width: 320, height: 740 });
+  assert.equal(
+    await admin.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1),
+    true,
+  );
+  await admin.setViewportSize({ width: 390, height: 844 });
+  assert.equal(
+    await admin.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1),
+    true,
+  );
+  await mkdir('/workspace/artifacts/member-signature', { recursive: true });
+  await admin.screenshot({
+    path: '/workspace/artifacts/member-signature/mobile.png',
+    fullPage: true,
+  });
+  await admin.locator('#save-sign').click();
+  await admin.waitForFunction(() =>
+    document.querySelector('.member-intro')?.textContent.includes('저장 완료'),
+  );
+  await admin.waitForFunction(() => document.querySelector('#member-screen').hidden);
+
   await admin.locator('#quick-record').waitFor();
   assert.equal((await request(admin, '/me')).body.user.role, 'admin');
   const pay = (await request(admin, '/payroll/' + manager.id + '?month=2026-11')).body;
   assert.equal(pay.rate, 50);
-  assert.equal(pay.commission, 50000);
+  assert.equal(pay.commission, 100000);
   assert.equal(
     (await request(admin, '/members/' + reg.body.member.id)).body.contracts[0].remaining,
-    9,
+    8,
   );
   await admin.setViewportSize({ width: 1440, height: 1000 });
   console.log(

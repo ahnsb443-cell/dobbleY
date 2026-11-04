@@ -3347,7 +3347,14 @@ async function leaveMemberMode() {
   await initialize();
 }
 window.addEventListener('popstate', () => {
-  if (extendedLessons && memberState) act(leaveMemberMode);
+  if (!extendedLessons || !memberState) return;
+  if ($('#member-history') && !$('#member-history').hidden) {
+    $('#member-history-back').click();
+    if (!history.state?.memberSigning)
+      history.pushState({ memberSigning: true }, '', location.href);
+    return;
+  }
+  act(leaveMemberMode);
 });
 async function showMember(r) {
   clearTimeout(memberReturnTimer);
@@ -3368,13 +3375,28 @@ async function showMember(r) {
     active = null,
     key = uid();
   host.innerHTML =
-    '<div class="member-sheet"><div class="member-brand">' +
+    '<div class="member-sheet"><div id="member-signing-content"><div class="member-brand">' +
     logo() +
     '<div>DOUBLE Y GYM<small>언주역점 · 수업 확인</small></div></div><div class="member-intro">' +
     (noShow ? '노쇼 저장 완료' : record ? '✓ 서명 저장 완료' : '회원님, 수업 내용을 확인해주세요') +
     '</div><h1>' +
     esc(snap?.member || '수업 확인') +
     '<small>회원님</small></h1>' +
+    (r.balance
+      ? '<section class="member-balance" aria-label="선택한 이용권 현재 잔여"><span>선택한 이용권 · 현재 차감 기준</span><p>' +
+        r.balance.quantity +
+        '회 중 ' +
+        r.balance.used +
+        '회 사용 ·</p><strong>' +
+        r.balance.remaining +
+        '<small>회 남음</small></strong><p>' +
+        (r.balance.additionalDeduction
+          ? '이번 수업은 아직 차감되지 않았습니다.'
+          : '이번 수업은 이미 차감되어 있습니다. 서명으로 추가 차감하지 않습니다.') +
+        '</p><p>이 이용권의 최근 다른 수업: ' +
+        esc(r.balance.recentDate || '기록 없음') +
+        '</p><small>이전 사용분은 이관 횟수와 활성 수업 기록을 합산합니다.</small></section>'
+      : '') +
     (snap
       ? '<div class="member-facts"><div><span>수업 날짜 / 시간</span><b>' +
         snap.date +
@@ -3386,10 +3408,20 @@ async function showMember(r) {
         snap.ordinal +
         '회차 <small>/ 총 ' +
         snap.registered +
-        '회</small></b></div><div><span>이 수업 후 잔여</span><b>' +
-        snap.remaining +
-        '회</b></div></div>'
+        '회</small></b></div><div><span>이번 수업 차감 횟수</span><b>1회' +
+        (r.balance && !r.balance.additionalDeduction ? ' (이미 반영)' : '') +
+        '</b></div></div><p class="member-after">' +
+        (completed ? '현재 잔여 ' : '이번 수업 확인 완료 시 잔여 ') +
+        '<strong>' +
+        (r.balance?.afterRemaining ?? snap.remaining) +
+        '회</strong></p>' +
+        (r.balance && !r.balance.additionalDeduction && !completed
+          ? '<p class="muted">수업 기록 시 차감된 건으로, 이번 서명은 잔여 횟수를 바꾸지 않습니다.</p>'
+          : '')
       : '<p>수업이 정정 또는 취소되었습니다. 선생님이 확인해주세요.</p>') +
+    (r.balance
+      ? '<button class="secondary wide" id="member-history-open">이전 서명 기록 보기</button>'
+      : '') +
     (r.confirmation.state === 'stale'
       ? '<p class="signature-warning">내용 또는 회차가 변경됐습니다. 이전 원본은 보관하고 현재 내용으로 다시 서명받습니다.</p>'
       : '') +
@@ -3423,7 +3455,7 @@ async function showMember(r) {
       : '<form id="return-form" hidden>' +
         field('선생님 비밀번호', 'password', 'password', '', 'autocomplete="current-password"') +
         '<div class="form-error"></div><button class="secondary wide" type="submit">비밀번호 확인 · 복귀</button></form>') +
-    '</div></div>';
+    '</div></div><section id="member-history" hidden aria-label="이전 서명 기록"><button class="secondary wide" id="member-history-back">현재 서명 화면으로 돌아가기</button><h2>이전 서명 기록</h2><p>이 회원님의 상품별 수업 기록입니다. 취소 건은 잔여에 반영되지 않습니다. 서명 원본의 회차·잔여는 당시 확인한 내용입니다.</p><div id="member-history-items"></div><p id="member-history-error" role="status"></p><button class="secondary wide" id="member-history-more" hidden>이전 기록 더 보기</button></section></div>';
   const canvas = $('#sign-pad');
   let rect, ctx;
   function draw() {
@@ -3494,6 +3526,7 @@ async function showMember(r) {
             body: {
               version: r.version,
               snapshot: r.snapshot,
+              ...(r.balance ? { balance: r.balance } : {}),
               confirmed: true,
               strokes: $('#no-show')?.checked ? [] : strokes,
               ...($('#no-show')?.checked ? { noShow: true } : {}),
@@ -3528,6 +3561,119 @@ async function showMember(r) {
       $('#save-sign').textContent = checked ? '확인 · 노쇼 저장' : '확인 · 서명 저장';
       if (!checked) draw();
     };
+  if ($('#member-history-open')) {
+    let next = null,
+      loaded = false;
+    const pane = $('#member-history'),
+      content = $('#member-signing-content');
+    async function loadHistory(append = false) {
+      const more = $('#member-history-more'),
+        error = $('#member-history-error');
+      more.disabled = true;
+      error.textContent = '기록을 불러오는 중입니다…';
+      try {
+        const result = await api(
+          '/member-mode/history' + (append && next ? '?after=' + encodeURIComponent(next) : ''),
+        );
+        const target = $('#member-history-items');
+        if (!append) target.innerHTML = '';
+        if (!result.items.length && !append)
+          target.innerHTML = '<p class="member-history-empty">이전 수업·서명 기록이 없습니다.</p>';
+        for (const item of result.items) {
+          const card = document.createElement('article');
+          card.className = 'member-history-card';
+          card.innerHTML =
+            '<h3>' +
+            esc(item.date + ' ' + item.time) +
+            '</h3><p>차감 ' +
+            item.deduction +
+            '회 · ' +
+            esc(
+              {
+                signed: '서명 완료',
+                unsigned: '서명 없음',
+                stale: '내용 변경 · 재확인 필요',
+                noshow: '노쇼 · 서명 없음',
+                void: '취소된 수업',
+              }[item.status] || item.status,
+            ) +
+            '</p>';
+          if (!item.signatures.length)
+            card.insertAdjacentHTML(
+              'beforeend',
+              '<p class="muted">저장된 서명 이미지가 없습니다.</p>',
+            );
+          for (const sig of item.signatures) {
+            const evidence = document.createElement('div');
+            evidence.className = 'member-history-evidence';
+            evidence.innerHTML =
+              '<p>서명 원본: ' +
+              esc(sig.date + ' ' + sig.time) +
+              ' · ' +
+              sig.ordinal +
+              '/' +
+              sig.registered +
+              '회차</p><small>원본에 기록된 해당 회차 후 잔여 ' +
+              sig.remaining +
+              '회 · 서명 저장 ' +
+              esc(new Date(sig.signedAt).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })) +
+              '</small><button class="secondary wide" type="button">저장된 서명 보기</button><div class="history-image" hidden></div><p role="status"></p>';
+            const button = evidence.querySelector('button'),
+              image = evidence.querySelector('.history-image'),
+              status = evidence.querySelector('[role=status]');
+            button.onclick = async () => {
+              button.disabled = true;
+              status.textContent = '서명을 불러오는 중입니다…';
+              try {
+                const payload = await api(
+                  '/member-mode/history-signature?id=' + encodeURIComponent(sig.id),
+                );
+                if (payload.strokes?.length) {
+                  image.hidden = false;
+                  image.innerHTML =
+                    '<canvas width="800" height="320" aria-label="이전 수업에 저장된 회원 서명"></canvas>';
+                  drawEvidence(image.querySelector('canvas'), payload.strokes);
+                  status.textContent = '';
+                  button.hidden = true;
+                } else {
+                  status.textContent = '서명 이력은 있으나 저장된 서명 이미지가 없습니다.';
+                  button.hidden = true;
+                }
+              } catch (e) {
+                status.textContent = e.message;
+              } finally {
+                button.disabled = false;
+              }
+            };
+            card.append(evidence);
+          }
+          target.append(card);
+        }
+        next = result.next;
+        more.hidden = !next;
+        loaded = true;
+        error.textContent = '';
+      } catch (e) {
+        error.textContent = e.message;
+      } finally {
+        more.disabled = false;
+      }
+    }
+    $('#member-history-open').onclick = async () => {
+      content.hidden = true;
+      pane.hidden = false;
+      pane.scrollIntoView({ block: 'start' });
+      if (!loaded) await loadHistory();
+    };
+    $('#member-history-back').onclick = () => {
+      pane.hidden = true;
+      content.hidden = false;
+      // Preserve the original canvas, strokes, consent, no-show selection and request key.
+      draw();
+      $('#member-history-open').scrollIntoView({ block: 'center' });
+    };
+    $('#member-history-more').onclick = () => loadHistory(true);
+  }
   $('#reload-sign').onclick = () => act(async () => showMember(await api('/member-mode')));
   $('#show-return').onclick = () => {
     if (extendedLessons) return act(leaveMemberMode);

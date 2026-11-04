@@ -34,6 +34,7 @@ export function createFirebaseApi(
         lessonId: l.id,
         version: l.version,
         snapshot: await d.snapshot(preview, l.id),
+        balance: await memberBalance(s, l, true),
         confirmation: { state: 'unsigned', signatureId: null, signedAt: null },
         signature: null,
         draft: true,
@@ -48,6 +49,7 @@ export function createFirebaseApi(
       lessonId: l.id,
       version: l.version,
       snapshot: await d.snapshot(s, l.id),
+      balance: await memberBalance(s, l, false),
       confirmation,
       noShow: l.no_show || null,
       signature: sig
@@ -58,6 +60,64 @@ export function createFirebaseApi(
           }
         : null,
     };
+  }
+  async function memberBalance(s, l, draft) {
+    const c = await d.required(s, 'contracts', l.contract_id);
+    const current = await d.progress(s, c);
+    const previous = (await d.contractLessons(s, c.id))
+      .filter((row) => row.id !== l.id)
+      .sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time));
+    return {
+      quantity: c.quantity,
+      used: current.used,
+      remaining: current.remaining,
+      deduction: 1,
+      additionalDeduction: draft ? 1 : 0,
+      afterRemaining: current.remaining - (draft ? 1 : 0),
+      recentDate: previous[0]?.date || null,
+    };
+  }
+  async function memberLesson(s, a) {
+    if (a.member_draft) {
+      const c = await d.owned(s, a, 'contracts', a.member_draft.input.contractId);
+      return { member_id: c.member_id };
+    }
+    if (!a.member_lesson_id) fail(409, '진행 중인 회원 확인 화면이 없습니다.');
+    return d.owned(s, a, 'lessons', a.member_lesson_id);
+  }
+  async function memberHistory(s, a, url) {
+    const current = await memberLesson(s, a);
+    // The member is derived exclusively from the server session, never a client member ID.
+    const rows = (await s.query('lessons', [['member_id', '==', current.member_id]]))
+      .filter((l) => l.id !== a.member_lesson_id)
+      .sort((a, b) => (b.date + b.time + b.id).localeCompare(a.date + a.time + a.id));
+    const after = url.searchParams.get('after');
+    const offset = after ? rows.findIndex((l) => l.id === after) + 1 : 0;
+    if (after && !offset) fail(400, '기록 위치를 다시 확인해주세요.');
+    const slice = rows.slice(offset, offset + 10);
+    const items = [];
+    for (const l of slice) {
+      const signatures = await s.query('signatures', [['lesson_id', '==', l.id]], {
+        order: [['signed_at', 'desc']],
+      });
+      items.push({
+        id: l.id,
+        date: l.date,
+        time: l.time,
+        deduction: l.status === 'active' ? 1 : 0,
+        status: l.status === 'active' ? (await d.confirmation(s, l)).state : 'void',
+        signatures: signatures.map((sig) => ({
+          id: sig.id,
+          signedAt: sig.signed_at,
+          date: sig.snapshot.date,
+          time: sig.snapshot.time,
+          ordinal: sig.snapshot.ordinal,
+          registered: sig.snapshot.registered,
+          remaining: sig.snapshot.remaining,
+        })),
+      });
+    }
+    return { items, next: offset + slice.length < rows.length ? slice.at(-1).id : null };
   }
   async function route(s, a, url, method, b) {
     const path = url.pathname.split('/').filter(Boolean),
@@ -71,6 +131,16 @@ export function createFirebaseApi(
     }
     if (kind === 'member-mode') {
       const session = await d.required(s, 'auth_sessions', a.session_hash);
+      if (path[2] === 'history' && method === 'GET') return memberHistory(s, a, url);
+      if (path[2] === 'history-signature' && method === 'GET') {
+        const current = await memberLesson(s, a);
+        const sig = await d.required(s, 'signatures', url.searchParams.get('id'));
+        const lesson = await d.required(s, 'lessons', sig.lesson_id);
+        if (lesson.member_id !== current.member_id)
+          fail(403, '해당 회원의 서명만 확인할 수 있습니다.');
+        const payload = await s.get('signature_payloads', sig.id);
+        return { strokes: payload ? JSON.parse(payload.strokes) : null };
+      }
       if (path[2] === 'exit' && method === 'POST') {
         await s.put('auth_sessions', a.session_hash, {
           ...session,
@@ -80,6 +150,11 @@ export function createFirebaseApi(
         return { ok: true };
       }
       if (path[2] === 'sign' && method === 'POST') {
+        if (b.balance) {
+          const current = await memberPayload(s, a);
+          if (JSON.stringify(current.balance) !== JSON.stringify(b.balance))
+            fail(409, '잔여 횟수 또는 최근 수업이 변경되었습니다. 저장 상태를 다시 확인해주세요.');
+        }
         if (session.member_draft) {
           const l = await d.addLesson(s, a, session.member_draft.input, {
             lessonId: session.member_draft.lessonId,

@@ -878,6 +878,16 @@ test(
             .body;
           assert.equal(draft.draft, true);
           assert.equal(draft.snapshot.remaining, 9);
+          assert.deepEqual(draft.balance, {
+            quantity: 10,
+            used: 0,
+            remaining: 10,
+            deduction: 1,
+            additionalDeduction: 1,
+            afterRemaining: 9,
+            recentDate: null,
+          });
+          assert.deepEqual((await ok('/member-mode/history', { auth: owner })).body.items, []);
           assert.equal((await ok('/me', { auth: owner })).body.user.memberMode, true);
           assert.equal((await req('/members', { auth: owner })).status, 403);
           assert.equal((await ok('/member-mode', { auth: owner })).body.lessonId, draft.lessonId);
@@ -943,6 +953,10 @@ test(
           assert.equal(await count(), 1);
           assert.equal(await remaining(), 9);
           assert.equal(await commission(), 20000);
+          const receipt = (await ok('/member-mode', { auth: owner })).body;
+          assert.equal(receipt.balance.remaining, 9);
+          assert.equal(receipt.balance.additionalDeduction, 0);
+          assert.equal(receipt.balance.afterRemaining, 9);
           assert.equal(
             (await ok('/member-mode', { auth: owner })).body.confirmation.state,
             'signed',
@@ -963,6 +977,31 @@ test(
             auth: another,
             body: { ...input, time: '10:00' },
           });
+          const history = (
+            await ok('/member-mode/history?memberId=not-this-member', { auth: owner })
+          ).body;
+          assert.equal(history.items.length, 2);
+          assert.equal(history.items[0].status, 'unsigned');
+          const original = history.items.find((item) => item.signatures.length);
+          assert.equal(original.signatures[0].id, saved.body.id);
+          assert.equal(original.deduction, 1);
+          assert.deepEqual(
+            (await ok('/member-mode/history-signature?id=' + saved.body.id, { auth: owner })).body
+              .strokes,
+            strokes,
+          );
+          assert.equal(
+            (await req('/member-mode/history-signature?id=' + signature.id, { auth: owner }))
+              .status,
+            403,
+          );
+          assert.equal(
+            (await req('/member-mode/history', { method: 'POST', auth: owner, body: {} })).status,
+            403,
+          );
+          assert.equal((await req('/payroll', { auth: owner })).status, 403);
+          assert.equal(await count(), 2);
+
           assert.equal(
             (
               await req('/member-mode/sign', {
@@ -978,6 +1017,68 @@ test(
           await ok('/member-mode/exit', { method: 'POST', auth: owner, body: {} });
           assert.equal(await count(), 2);
           assert.equal(await remaining(), 8);
+          const renewal = (
+            await ok('/contracts', {
+              method: 'POST',
+              auth: owner,
+              body: {
+                memberId: registration.member.id,
+                personId: person.id,
+                paidDate: '2026-11-01',
+                quantity: 20,
+                amount: 220000,
+                category: 'pt',
+                saleType: 'renew',
+                fixedFee: 20000,
+              },
+            })
+          ).body;
+          // The ledger follows this member across products, and includes cancelled/unsigned rows.
+          for (let i = 0; i < 11; i++)
+            await ok('/lessons', {
+              method: 'POST',
+              auth: owner,
+              body: {
+                contractId: renewal.id,
+                date: '2026-11-01',
+                time: '12:' + String(i).padStart(2, '0'),
+              },
+            });
+          const preview = (
+            await ok('/member-mode', {
+              method: 'POST',
+              auth: owner,
+              body: { ...input, time: '13:00' },
+            })
+          ).body;
+          const page1 = (await ok('/member-mode/history', { auth: owner })).body;
+          assert.equal(page1.items.length, 10);
+          assert.ok(page1.next);
+          const page2 = (await ok('/member-mode/history?after=' + page1.next, { auth: owner }))
+            .body;
+          assert.equal(page2.items.length, 3);
+          assert.equal(page2.next, null);
+          assert.equal(new Set([...page1.items, ...page2.items].map((x) => x.id)).size, 13);
+          // A later chronological class changes current balance without changing preview ordinal.
+          await ok('/lessons', {
+            method: 'POST',
+            auth: another,
+            body: { ...input, time: '14:00' },
+          });
+          const outdated = await req('/member-mode/sign', {
+            method: 'POST',
+            auth: owner,
+            body: {
+              snapshot: preview.snapshot,
+              balance: preview.balance,
+              version: 1,
+              confirmed: true,
+              strokes,
+            },
+          });
+          assert.equal(outdated.status, 409);
+          assert.equal(await count(), 3);
+          await ok('/member-mode/exit', { method: 'POST', auth: owner, body: {} });
         },
       );
       await t.test(
