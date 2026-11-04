@@ -5,7 +5,8 @@
 
 SQLite용 systemd/Caddy 구성은 Firebase 배포에 사용하지 않습니다.
 이전 운영 문서는 [OPERATIONS-SQLITE.md](OPERATIONS-SQLITE.md)에 보존했습니다.
-실제 외부 배포와 예약 백업 활성화는 아직 하지 않았습니다.
+실제 외부 배포는 완료됐습니다. 예약 백업 활성화 상태는 이번 작업에서 확인하지 않았습니다.
+최신 상태는 [인수인계 문서](docs/HANDOFF-2026-11-04.md)를 먼저 확인하세요.
 
 ## 관리자 수업 삭제
 

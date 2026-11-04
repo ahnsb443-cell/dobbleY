@@ -1,6 +1,6 @@
 # Firebase 연결·운영 안내
 
-현재 코드/에뮬레이터 검증까지 준비되어 있습니다. 실제 Firebase 프로젝트·도메인·결제 계정·비밀값은 연결하지 않았으며 배포 명령은 실행하지 않았습니다.
+2026-11-04 현재 `dobbley-gym-payroll` 프로젝트에 배포돼 운영 중입니다. 최신 상태는 [인수인계 문서](docs/HANDOFF-2026-11-04.md)를 먼저 확인하세요. 아래 “처음 연결”은 새 프로젝트 구축 참고이며 기존 운영 프로젝트에서 다시 초기화하지 않습니다.
 
 ## 구성
 
@@ -29,7 +29,7 @@
    기본 도메인은 https://<프로젝트ID>.web.app입니다. 사용자 도메인은 PUBLIC_ORIGIN도 같이 지정합니다.
 9. 최초 관리자 설정 코드를 Secret Manager에 저장합니다.
 
-    npx firebase functions:secrets:set SETUP_TOKEN --project 실제프로젝트ID
+   npx firebase functions:secrets:set SETUP_TOKEN --project 실제프로젝트ID
 
 SETUP_TOKEN은 충분히 긴 임의값을 사용하고 채팅/소스에 붙여넣지 않습니다.
 서버 서비스 계정 키 JSON을 브라우저, public, Git 저장소에 넣지 않습니다.
@@ -37,8 +37,7 @@ Functions는 런타임 서비스 계정(ADC)을 사용합니다.
 
 ## 배포할 때
 
-요청 범위에 외부 게시 금지가 있어 현재 배포는 하지 않았습니다.
-준비된 코드 확인 후 운영자가 명시적으로 배포하는 명령입니다.
+기존 프로젝트는 배포 완료 상태입니다. 아래 명령은 변경 검증 후 사용하는 배포 방법입니다. 운영 프로젝트는 `dobbley-gym-payroll`을 명시합니다.
 
     npx firebase deploy --project 실제프로젝트ID --only firestore:rules,firestore:indexes
     npx firebase deploy --project 실제프로젝트ID --only functions:payroll,hosting
